@@ -138,8 +138,11 @@ object ZeaProfiles {
         val profileHidden = profile.hiddenPackages.toSet()
         val profileTimed = profile.timedPackages
 
-        // Packages protected now but not in the profile get unhidden.
-        for (packageName in currentHidden.filterNot { profileHidden.contains(it) }) {
+        // Packages protected now but not claimed by the profile get unhidden.
+        // Timed members paired with a future end must survive the unhide sweep.
+        for (packageName in currentHidden.filterNot {
+            profileHidden.contains(it) || profileTimed.containsKey(it)
+        }) {
             val outcome = ZeaAppHideService.unhideApp(context, packageName)
             if (outcome.success) {
                 hiddenSucceeded += packageName
@@ -195,17 +198,44 @@ object ZeaProfiles {
         )
     }
 
-    /** Deactivating a profile simply leaves current state as-is (no-op). */
-    suspend fun deactivateProfile(context: Context, profileId: String): Boolean {
-        val profile = load(context).firstOrNull { it.id == profileId } ?: return false
+    /**
+     * Deactivating a profile unhides the packages that profile itself claimed.
+     * Nothing unrelated to the profile is touched; per-app failures surface
+     * in the activity history.
+     */
+    suspend fun deactivateProfile(
+        context: Context,
+        profileId: String
+    ): ZeaProfileApplyResult {
+        val profile = load(context).firstOrNull { it.id == profileId }
+            ?: return ZeaProfileApplyResult(emptyList(), emptyList(), emptyList(), emptyList())
+
+        val hiddenSucceeded = mutableListOf<String>()
+        val hiddenFailed = mutableListOf<Pair<String, String>>()
+
+        val candidates = (profile.hiddenPackages + profile.timedPackages.keys).distinct()
+        for (packageName in candidates) {
+            val outcome = ZeaAppHideService.unhideApp(context, packageName)
+            if (outcome.success) {
+                hiddenSucceeded += packageName
+            } else {
+                hiddenFailed += packageName to outcome.message
+            }
+        }
+
         ZeaActivityLog.record(
             context,
             ZeaActivityEventType.PROFILE_DEACTIVATED,
             profile.name,
-            "profile left active state untouched",
-            ZeaActivityResult.SUCCESS
+            "unhid ${hiddenSucceeded.size} profile members; ${hiddenFailed.size} failures",
+            if (hiddenFailed.isEmpty()) ZeaActivityResult.SUCCESS else ZeaActivityResult.PARTIAL
         )
-        return true
+        return ZeaProfileApplyResult(
+            hiddenSucceeded = hiddenSucceeded,
+            hiddenFailed = hiddenFailed,
+            timedSucceeded = emptyList(),
+            timedFailed = emptyList()
+        )
     }
 
     private fun encode(profiles: List<ZeaProfile>): String {

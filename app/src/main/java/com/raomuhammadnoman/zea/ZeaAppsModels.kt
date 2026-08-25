@@ -88,7 +88,8 @@ data class ZeaManagedApp(
     val hideMode: ZeaHideMode = ZeaHideMode.VISIBLE,
     val hiddenUntilEpochMillis: Long = 0L,
     val manageable: Boolean = true,
-    val blockedReason: String = ""
+    val blockedReason: String = "",
+    val firstInstallTimeEpochMillis: Long = 0L
 )
 
 /** An app hidden until [hiddenUntilEpochMillis], after which Zea releases it. */

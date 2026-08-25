@@ -128,6 +128,13 @@ fun ZeaProfilesScreen(onBack: () -> Unit) {
                                     refresh()
                                 }
                             },
+                            onDeactivate = {
+                                scope.launch {
+                                    val result = ZeaProfiles.deactivateProfile(context, profile.id)
+                                    operationMessage = "Deactivated; ${result.hiddenSucceeded.size} unhidden, ${result.hiddenFailed.size} failures."
+                                    refresh()
+                                }
+                            },
                             onRename = { renameTarget = profile },
                             onDelete = { deleteTarget = profile },
                             onDuplicate = {
@@ -210,10 +217,11 @@ fun ZeaProfilesScreen(onBack: () -> Unit) {
 private fun ZeaProfileCard(
     profile: ZeaProfile,
     onActivate: () -> Unit,
+    onDeactivate: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onDuplicate: () -> Unit
-) {
+    ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -238,6 +246,9 @@ private fun ZeaProfileCard(
                 Row {
                     TextButton(onClick = onActivate) {
                         Text("Activate")
+                    }
+                    TextButton(onClick = onDeactivate) {
+                        Text("Deactivate")
                     }
                     TextButton(onClick = onRename) {
                         Text("Rename")

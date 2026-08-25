@@ -138,7 +138,8 @@ object ZeaAppCatalog {
                     hideMode = if (timed != null) ZeaHideMode.TIMED else ZeaHideMode.HIDDEN,
                     hiddenUntilEpochMillis = timed?.hiddenUntilEpochMillis ?: 0L,
                     manageable = true,
-                    blockedReason = ""
+                    blockedReason = "",
+                    firstInstallTimeEpochMillis = firstInstallTime(packageManager, record.packageName)
                 )
             }
             .toList()
@@ -177,7 +178,8 @@ object ZeaAppCatalog {
             hideMode = hideMode,
             hiddenUntilEpochMillis = timed?.hiddenUntilEpochMillis ?: 0L,
             manageable = safety.allowed,
-            blockedReason = if (safety.allowed) "" else safety.message
+            blockedReason = if (safety.allowed) "" else safety.message,
+            firstInstallTimeEpochMillis = firstInstallTime(packageManager, candidate.packageName)
         )
     }
 
@@ -199,6 +201,21 @@ object ZeaAppCatalog {
             false
         } catch (_: RuntimeException) {
             false
+        }
+    }
+
+    private fun firstInstallTime(
+        packageManager: PackageManager,
+        packageName: String
+    ): Long {
+        return try {
+            packageManager
+                .getPackageInfo(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES)
+                .firstInstallTime
+        } catch (_: PackageManager.NameNotFoundException) {
+            0L
+        } catch (_: RuntimeException) {
+            0L
         }
     }
 

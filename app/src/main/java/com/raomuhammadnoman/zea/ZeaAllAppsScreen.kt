@@ -78,6 +78,9 @@ enum class ZeaAppsFilter {
     RECENTLY_MANAGED
 }
 
+/** Recently-installed filter looks back this far. Chosen to equal RECENTLY_MANAGED. */
+private const val ZEA_RECENTLY_INSTALLED_WINDOW_MILLIS = 7L * 24L * 60L * 60L * 1000L
+
 /**
  * Full list of the apps Zea can see, with search, sorting and long press
  * management.
@@ -981,7 +984,10 @@ internal fun filterAndSortApps(
         ZeaAppsFilter.USER_APPS -> apps.filter { !it.systemApp }
         ZeaAppsFilter.PROTECTED -> apps.filter { it.hideMode != ZeaHideMode.VISIBLE }
         ZeaAppsFilter.UNPROTECTED -> apps.filter { it.hideMode == ZeaHideMode.VISIBLE }
-        ZeaAppsFilter.RECENTLY_INSTALLED -> apps.sortedByDescending { it.packageName.hashCode() }
+        ZeaAppsFilter.RECENTLY_INSTALLED -> apps.filter { app ->
+            app.firstInstallTimeEpochMillis >=
+                    System.currentTimeMillis() - ZEA_RECENTLY_INSTALLED_WINDOW_MILLIS
+        }
         ZeaAppsFilter.RECENTLY_MANAGED -> {
             val recentOrder = recentlyManaged
                 .sortedByDescending { it.epochMillis }
@@ -1011,7 +1017,9 @@ internal fun filterAndSortApps(
                 { app -> app.displayName.lowercase(Locale.ROOT) }
             )
         )
-        ZeaAppsSort.RECENTLY_INSTALLED -> matching.sortedByDescending { it.packageName.hashCode() }
+        ZeaAppsSort.RECENTLY_INSTALLED -> matching.sortedByDescending {
+            it.firstInstallTimeEpochMillis
+        }
         ZeaAppsSort.RECENTLY_HIDDEN -> matching.sortedByDescending { app ->
             recentlyManaged
                 .firstOrNull { it.packageName == app.packageName && it.operation == "Hide" }

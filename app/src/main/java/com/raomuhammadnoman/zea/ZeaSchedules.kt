@@ -254,8 +254,9 @@ object ZeaSchedules {
             }
         )
 
-        // One-time schedules disable themselves after the first start fire.
-        if (schedule.kind == ZeaScheduleKind.ONE_TIME && phase == PHASE_START) {
+        // One-time schedules disable themselves only after the end phase
+        // has fired; disabling at START would leave the app hidden forever.
+        if (schedule.kind == ZeaScheduleKind.ONE_TIME && phase == PHASE_END) {
             updateSchedule(context, schedule.copy(enabled = false))
             return
         }

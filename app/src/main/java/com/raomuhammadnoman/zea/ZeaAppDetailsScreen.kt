@@ -145,6 +145,9 @@ fun ZeaAppDetailsScreen(
                     if (currentApp.hiddenUntilEpochMillis > 0) {
                         ZeaAppDetailRow("Hidden until", zeaFormatEpoch(currentApp.hiddenUntilEpochMillis))
                     }
+                    if (currentApp.firstInstallTimeEpochMillis > 0) {
+                        ZeaAppDetailRow("Installed", zeaFormatEpoch(currentApp.firstInstallTimeEpochMillis))
+                    }
                     val memberGroups = groups.filter { it.memberPackages.contains(packageName) }
                     if (memberGroups.isNotEmpty()) {
                         ZeaAppDetailRow("Groups", memberGroups.joinToString { it.name })

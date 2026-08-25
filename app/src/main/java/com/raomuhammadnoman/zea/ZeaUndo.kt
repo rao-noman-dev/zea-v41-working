@@ -61,16 +61,26 @@ object ZeaUndo {
         val entry = load(context) ?: return false
         if (System.currentTimeMillis() - entry.epochMillis > WINDOW_MILLIS) return false
 
+        val currentMode = currentHideModeOf(context, entry.packageName)
         return when (entry.operation) {
-            UndoOperation.HIDE -> {
-                // Undoing a hide means unhiding back to the previous visible state.
-                entry.previousMode == ZeaHideMode.VISIBLE ||
-                        entry.previousMode == ZeaHideMode.TIMED
-            }
-            UndoOperation.UNHIDE -> entry.previousMode == ZeaHideMode.HIDDEN ||
-                    entry.previousMode == ZeaHideMode.TIMED
-            UndoOperation.TIMED_HIDE -> true
+            // A hide was applied; undo is only meaningful while the app is
+            // actually hidden/timed now, otherwise a no-op unhide would lie.
+            UndoOperation.HIDE ->
+                currentMode == ZeaHideMode.HIDDEN || currentMode == ZeaHideMode.TIMED
+            // An unhide was applied; undo re-hides, so the app must be
+            // back to VISIBLE by now.
+            UndoOperation.UNHIDE -> currentMode == ZeaHideMode.VISIBLE
+            // A timed hide was applied; the timer must still be running.
+            UndoOperation.TIMED_HIDE -> currentMode == ZeaHideMode.TIMED
         }
+    }
+
+    private suspend fun currentHideModeOf(
+        context: Context,
+        packageName: String
+    ): ZeaHideMode = withContext(Dispatchers.IO) {
+        val appContext = context.applicationContext
+        zeaManagedAppFromPackage(appContext, packageName)?.hideMode ?: ZeaHideMode.VISIBLE
     }
 
     suspend fun performUndo(context: Context): ZeaHideOutcome? {
