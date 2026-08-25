@@ -54,20 +54,23 @@ fun ZeaAppDetailsScreen(
     var groups by remember { mutableStateOf<List<ZeaGroup>>(emptyList()) }
     var operationMessage by remember { mutableStateOf("") }
     var showTimeDialog by remember { mutableStateOf(false) }
+    var launchInProgress by remember { mutableStateOf(false) }
+    // Unified identity: the same favorites identity rules used everywhere else,
+    // so the favorite state here never drifts from search or list surfaces.
+    var favoritePackages by remember { mutableStateOf(emptySet<String>()) }
 
-    LaunchedEffect(packageName) {
-        app = zeaManagedAppFromPackage(context, packageName)
-        isFavorite = ZeaFavorites.isFavorite(context, packageName)
-        groups = ZeaGroups.load(context)
-    }
-
-    fun refresh() {
+    fun reload() {
         scope.launch {
             app = zeaManagedAppFromPackage(context, packageName)
+            favoritePackages = ZeaFavorites.load(context).toSet()
             isFavorite = ZeaFavorites.isFavorite(context, packageName)
             groups = ZeaGroups.load(context)
         }
     }
+
+    LaunchedEffect(packageName) { reload() }
+
+    fun refresh() = reload()
 
     Scaffold(
         topBar = {
@@ -143,12 +146,18 @@ fun ZeaAppDetailsScreen(
                     if (currentApp.blockedReason.isNotEmpty()) {
                         ZeaAppDetailRow("Blocked reason", currentApp.blockedReason)
                     }
-                    if (currentApp.hiddenUntilEpochMillis > 0) {
+                    if (currentApp.hideMode == ZeaHideMode.TIMED && currentApp.hiddenUntilEpochMillis > 0) {
+                        // Remaining time only exists for the TIMED state; for a
+                        // plain permanent hide there is no end to count down to.
                         ZeaAppDetailRow("Hidden until", zeaFormatEpoch(currentApp.hiddenUntilEpochMillis))
-                        val remainingMinutes =
-                            ((currentApp.hiddenUntilEpochMillis - System.currentTimeMillis()) / 60_000L)
+                        val remainingMillis =
+                            (currentApp.hiddenUntilEpochMillis - System.currentTimeMillis())
                                 .coerceAtLeast(0L)
-                        ZeaAppDetailRow("Remaining time", "$remainingMinutes min")
+                        val remainingMinutes = (remainingMillis + 30_000L) / 60_000L
+                        val hours = remainingMinutes / 60L
+                        val mins = remainingMinutes % 60L
+                        val remainingLabel = if (hours > 0) "${hours}h ${mins}m" else "${mins}m"
+                        ZeaAppDetailRow("Remaining time", remainingLabel)
                     }
                     if (currentApp.firstInstallTimeEpochMillis > 0) {
                         ZeaAppDetailRow("Installed", zeaFormatEpoch(currentApp.firstInstallTimeEpochMillis))
@@ -163,38 +172,63 @@ fun ZeaAppDetailsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    scope.launch {
-                        val outcome = ZeaAppHideService.hideApp(context, currentApp)
-                        operationMessage = outcome.message
-                        refresh()
+                // Applied-state guards: an action that cannot apply to the
+                // current state is disabled instead of no-oping silently.
+                Button(
+                    enabled = currentApp.manageable && currentApp.hideMode == ZeaHideMode.VISIBLE,
+                    onClick = {
+                        scope.launch {
+                            val outcome = ZeaAppHideService.hideApp(context, currentApp)
+                            operationMessage = outcome.message
+                            refresh()
+                        }
                     }
-                }) {
+                ) {
                     Text("Hide")
                 }
-                Button(onClick = {
-                    scope.launch {
-                        val outcome = ZeaAppHideService.unhideApp(context, packageName)
-                        operationMessage = outcome.message
-                        refresh()
+                Button(
+                    enabled = currentApp.hideMode != ZeaHideMode.VISIBLE,
+                    onClick = {
+                        scope.launch {
+                            val outcome = ZeaAppHideService.unhideApp(context, packageName)
+                            operationMessage = outcome.message
+                            refresh()
+                        }
                     }
-                }) {
+                ) {
                     Text("Unhide")
                 }
-                Button(onClick = { showTimeDialog = true }) {
+                Button(
+                    enabled = currentApp.manageable,
+                    onClick = { showTimeDialog = true }
+                ) {
                     Text("Hide for Time")
                 }
             }
             if (currentApp.launcherActivityName.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = {
-                    val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
-                    if (launchIntent != null) {
-                        context.startActivity(launchIntent)
-                    } else {
-                        operationMessage = "No launchable activity found for this app."
+                Button(
+                    enabled = !launchInProgress,
+                    onClick = {
+                        launchInProgress = true
+                        scope.launch {
+                            // Reuse the verified launcher pipeline instead of a
+                            // raw intent: protected launches keep the same
+                            // resolution, permission and audit behavior as the
+                            // rest of the app.
+                            val result = ZeaAppLauncher.launchAppWithTimeout(
+                                context,
+                                currentApp.packageName,
+                                currentApp.displayName
+                            )
+                            if (!result.success) {
+                                operationMessage = result.message
+                            }
+                            launchInProgress = false
+                            refresh()
+                        }
                     }
-                }) {
+                ) {
                     Text("Launch app")
                 }
             }

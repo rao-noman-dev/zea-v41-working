@@ -36,11 +36,19 @@ object ZeaSearch {
 
         val results = mutableListOf<ZeaSearchResult>()
 
+        // Privacy gate: apps registered in the private-app registry never leak
+        // into global search results, regardless of the query. Hiding an app
+        // must hide its identity from every search surface too.
+        val privatePackages = loadPrivateApps(context)
+            .map { it.packageName.lowercase() }
+            .toSet()
+
         // Apps — subtitle reports the coherent CURRENT status, not just the
         // package name: Visible / Hidden / Timed (+ remaining) / Protected.
         val apps = ZeaAppCatalog.loadManagedApps(context)
         val now = System.currentTimeMillis()
         apps.forEach { app ->
+            if (app.packageName.lowercase() in privatePackages) return@forEach
             if (app.displayName.lowercase().contains(lowerQuery) ||
                 app.packageName.lowercase().contains(lowerQuery)
             ) {

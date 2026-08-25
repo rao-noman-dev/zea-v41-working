@@ -138,9 +138,12 @@ fun ZeaAllAppsScreen(
             } else {
                 refreshed.apps
             }
-            val visibleApps = refreshedApps.filter { app -> app.hideMode == ZeaHideMode.VISIBLE }
-            apps = visibleApps
-            val validPackages = visibleApps.mapTo(mutableSetOf()) { it.packageName }
+            // All Apps must hold the FULL coherent catalog: hidden and timed
+            // apps included. The status filters (Visible/Hidden/Timed) operate
+            // on top of this catalog inside filterAndSortApps; pre-reducing to
+            // visible apps would make Hidden/Timed filters permanently empty.
+            apps = refreshedApps
+            val validPackages = refreshedApps.mapTo(mutableSetOf()) { it.packageName }
             val prunedSelection = selectedPackages.filterTo(mutableSetOf()) { it in validPackages }
             if (prunedSelection != selectedPackages) {
                 selectedPackages = prunedSelection
@@ -1116,8 +1119,12 @@ internal fun filterAndSortApps(
     }
 
     return when (sort) {
-        // The catalog already hands back a name-ordered list.
-        ZeaAppsSort.NAME -> matching
+        // NAME must sort by name regardless of the incoming order — combined
+        // filters (e.g. RECENTLY_MANAGED) reorder the list by recency, and
+        // that order must not leak into a Name sort.
+        ZeaAppsSort.NAME -> matching.sortedBy {
+            it.displayName.lowercase(Locale.ROOT)
+        }
         ZeaAppsSort.STATUS -> matching.sortedWith(
             compareBy(
                 { app -> statusRank(app) },

@@ -317,12 +317,13 @@ class ZeaPhase3LogicTest {
 
     @Test
     fun activeWindow_crossesMidnightAndStaysActivePastMidnight() {
-        // Daily 22:00 -> 06:00; now is 03:00 the NEXT day. The start epoch
-        // calculated for "today" is 22:00 tonight, which is in the future —
-        // so the engine must NOT consider the schedule active.
+        // Daily 22:00 -> 06:00; now is 03:00 the NEXT day. The window that
+        // started yesterday at 22:00 is still open, so the engine MUST report
+        // it active until today's 06:00 end.
         val now = atLocal(2026, Calendar.AUGUST, 26, 3, 0)
         val schedule = dailySchedule(22 * 60, 6 * 60)
-        assertNull(zeaScheduleActiveWindow(schedule, now))
+        val expected = atLocal(2026, Calendar.AUGUST, 26, 6, 0)
+        assertEquals(expected, zeaScheduleActiveWindow(schedule, now))
     }
 
     @Test

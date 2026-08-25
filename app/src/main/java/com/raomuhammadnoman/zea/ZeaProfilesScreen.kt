@@ -201,9 +201,14 @@ fun ZeaProfilesScreen(onBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        ZeaProfiles.deleteProfile(context, target.id)
-                        deleteTarget = null
-                        refresh()
+                        val deleted = ZeaProfiles.deleteProfile(context, target.id)
+                        if (deleted) {
+                            deleteTarget = null
+                            refresh()
+                        } else {
+                            deleteTarget = null
+                            operationMessage = "Profile is active; deactivate it before deleting."
+                        }
                     }
                 }) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
@@ -218,22 +223,36 @@ fun ZeaProfilesScreen(onBack: () -> Unit) {
     }
 
     editTarget?.let { target ->
-        ZeaProfileEditDialog(
-            profile = target,
-            onDismiss = { editTarget = null },
-            onSave = { hidden, timed ->
-                scope.launch {
-                    val updated = target.copy(
-                        hiddenPackages = hidden,
-                        timedPackages = timed
-                    )
-                    ZeaProfiles.updateProfile(context, updated)
-                    editTarget = null
-                    operationMessage = "Profile membership updated. Activate to apply."
-                    refresh()
+        // Editing membership while the profile owns state changes would orphan
+        // the ownership snapshot. Rename stays allowed; membership edits wait
+        // until the profile is deactivated.
+        if (target.isActive) {
+            AlertDialog(
+                onDismissRequest = { editTarget = null },
+                title = { Text("Profile is active") },
+                text = { Text("Membership cannot be edited while the profile is active. Deactivate it first, then edit.") },
+                confirmButton = {
+                    TextButton(onClick = { editTarget = null }) { Text("OK") }
                 }
-            }
-        )
+            )
+        } else {
+            ZeaProfileEditDialog(
+                profile = target,
+                onDismiss = { editTarget = null },
+                onSave = { hidden, timed ->
+                    scope.launch {
+                        val updated = target.copy(
+                            hiddenPackages = hidden,
+                            timedPackages = timed
+                        )
+                        ZeaProfiles.updateProfile(context, updated)
+                        editTarget = null
+                        operationMessage = "Profile membership updated. Activate to apply."
+                        refresh()
+                    }
+                }
+            )
+        }
     }
 }
 

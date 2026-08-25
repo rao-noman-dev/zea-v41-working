@@ -114,6 +114,12 @@ fun zeaScheduleEndAfter(
  * end of that CURRENT window. Returns null when the schedule is outside any
  * active window (or disabled). This is the missed-active-window recovery hook:
  * after reboot/time-change, a still-active window must not be lost.
+ *
+ * Cross-midnight windows require looking at YESTERDAY's start as well as
+ * today's: a Monday 22:00 -> 07:00 window is still active at Tuesday 01:00,
+ * even though Tuesday itself may not be a selected day. We therefore evaluate
+ * the most recent candidate start on today AND yesterday and return the end of
+ * whichever window currently contains [nowEpochMillis].
  */
 fun zeaScheduleActiveWindow(
     schedule: ZeaSchedule,
@@ -121,44 +127,41 @@ fun zeaScheduleActiveWindow(
 ): Long? {
     if (!schedule.enabled) return null
 
-    val calendar = Calendar.getInstance().apply { timeInMillis = nowEpochMillis }
-
-    val startEpochMillis: Long = when (schedule.kind) {
-        ZeaScheduleKind.ONE_TIME -> schedule.oneTimeStartEpochMillis
-        ZeaScheduleKind.DAILY -> Calendar.getInstance().apply {
+    fun startOnDay(dayOffset: Int): Long? {
+        val base = Calendar.getInstance().apply {
             timeInMillis = nowEpochMillis
+            add(Calendar.DAY_OF_YEAR, dayOffset)
+        }
+        val day = base.get(Calendar.DAY_OF_WEEK)
+        val daySelected = when (schedule.kind) {
+            ZeaScheduleKind.ONE_TIME -> false
+            ZeaScheduleKind.DAILY -> true
+            ZeaScheduleKind.WEEKDAYS -> day in Calendar.MONDAY..Calendar.FRIDAY
+            ZeaScheduleKind.CUSTOM_DAYS ->
+                schedule.daysOfWeek.isNotEmpty() && day in schedule.daysOfWeek
+        }
+        if (!daySelected) return null
+        return base.apply {
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
             set(Calendar.HOUR_OF_DAY, schedule.startMinuteOfDay / 60)
             set(Calendar.MINUTE, schedule.startMinuteOfDay % 60)
         }.timeInMillis
-        ZeaScheduleKind.WEEKDAYS -> {
-            val day = calendar.get(Calendar.DAY_OF_WEEK)
-            if (day !in Calendar.MONDAY..Calendar.FRIDAY) return null
-            Calendar.getInstance().apply {
-                timeInMillis = nowEpochMillis
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-                set(Calendar.HOUR_OF_DAY, schedule.startMinuteOfDay / 60)
-                set(Calendar.MINUTE, schedule.startMinuteOfDay % 60)
-            }.timeInMillis
-        }
-        ZeaScheduleKind.CUSTOM_DAYS -> {
-            if (schedule.daysOfWeek.isEmpty()) return null
-            val day = calendar.get(Calendar.DAY_OF_WEEK)
-            if (day !in schedule.daysOfWeek) return null
-            Calendar.getInstance().apply {
-                timeInMillis = nowEpochMillis
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-                set(Calendar.HOUR_OF_DAY, schedule.startMinuteOfDay / 60)
-                set(Calendar.MINUTE, schedule.startMinuteOfDay % 60)
-            }.timeInMillis
-        }
     }
 
-    val end = zeaScheduleEndAfter(schedule, startEpochMillis)
-    return if (nowEpochMillis >= startEpochMillis && nowEpochMillis < end) end else null
+    val candidates = when (schedule.kind) {
+        ZeaScheduleKind.ONE_TIME -> listOf(schedule.oneTimeStartEpochMillis)
+        else -> listOfNotNull(startOnDay(0), startOnDay(-1))
+    }
+
+    var activeEnd: Long? = null
+    for (start in candidates) {
+        val end = zeaScheduleEndAfter(schedule, start)
+        if (nowEpochMillis >= start && nowEpochMillis < end) {
+            if (activeEnd == null || end > activeEnd) activeEnd = end
+        }
+    }
+    return activeEnd
 }
 
 /**
@@ -170,11 +173,62 @@ fun zeaScheduleActiveWindow(
  */
 object ZeaSchedules {
     private const val KEY_SCHEDULES = "app_schedules_v1"
+    private const val KEY_SCHEDULE_OWNERSHIP = "app_schedule_ownership_v1"
     private const val ACTION_FIRE = "com.raomuhammadnoman.zea.action.SCHEDULE_FIRED"
     private const val EXTRA_SCHEDULE_ID = "schedule_id"
     private const val EXTRA_SCHEDULE_PHASE = "schedule_phase"
     private const val PHASE_START = "start"
     private const val PHASE_END = "end"
+
+    // ---- Per-schedule prior-state ownership ----
+    // Captured at START so a later END never blindly unhides state the user
+    // had before the schedule claimed the app (manual hide / timed state).
+
+    private fun loadOwnership(context: Context): Map<String, Map<String, ZeaScheduleOwnershipRecord>> {
+        val raw = getZeaPrefs(context.applicationContext)
+            .getString(KEY_SCHEDULE_OWNERSHIP, null) ?: return emptyMap()
+        return decodeOwnership(raw)
+    }
+
+    private fun saveOwnership(
+        context: Context,
+        ownership: Map<String, Map<String, ZeaScheduleOwnershipRecord>>
+    ): Boolean = getZeaPrefs(context.applicationContext)
+        .edit()
+        .putString(KEY_SCHEDULE_OWNERSHIP, encodeOwnership(ownership))
+        .commit()
+
+    private fun recordOwnership(
+        context: Context,
+        scheduleId: String,
+        packageName: String,
+        record: ZeaScheduleOwnershipRecord
+    ) {
+        val all = loadOwnership(context).toMutableMap()
+        val perSchedule = (all[scheduleId] ?: emptyMap()).toMutableMap()
+        perSchedule[packageName] = record
+        all[scheduleId] = perSchedule
+        saveOwnership(context, all)
+    }
+
+    private fun ownershipFor(
+        context: Context,
+        scheduleId: String,
+        packageName: String
+    ): ZeaScheduleOwnershipRecord? = loadOwnership(context)[scheduleId]?.get(packageName)
+
+    private fun clearOwnership(context: Context, scheduleId: String, packageName: String) {
+        val all = loadOwnership(context).toMutableMap()
+        val perSchedule = (all[scheduleId] ?: return).toMutableMap()
+        perSchedule.remove(packageName)
+        if (perSchedule.isEmpty()) all.remove(scheduleId) else all[scheduleId] = perSchedule
+        saveOwnership(context, all)
+    }
+
+    private fun clearOwnershipForSchedule(context: Context, scheduleId: String) {
+        val all = loadOwnership(context).toMutableMap()
+        if (all.remove(scheduleId) != null) saveOwnership(context, all)
+    }
 
     suspend fun load(context: Context): List<ZeaSchedule> = withContext(Dispatchers.IO) {
         val raw = getZeaPrefs(context.applicationContext)
@@ -202,9 +256,6 @@ object ZeaSchedules {
         oneTimeStartEpochMillis: Long
     ): ZeaSchedule? {
         val cleanName = name.trim()
-        if (cleanName.isEmpty() || cleanName.length > 60) return null
-        if (startMinuteOfDay !in 0..1439 || endMinuteOfDay !in 0..1439) return null
-        if (targetGroupId == null && targetPackages.isEmpty()) return null
         val schedule = ZeaSchedule(
             id = UUID.randomUUID().toString(),
             name = cleanName,
@@ -218,22 +269,50 @@ object ZeaSchedules {
             enabled = true,
             createdAtEpochMillis = System.currentTimeMillis()
         )
+        // zeaScheduleIsValid rejects blank/oversized names, out-of-range
+        // minutes, empty targets and CUSTOM_DAYS with zero selected days.
+        if (!zeaScheduleIsValid(schedule)) return null
         val updated = load(context) + schedule
         return if (save(context, updated)) {
-            rearm(context)
-            schedule
+            // Honest status: if the engine cannot arm the required alarms, the
+            // schedule is persisted but reported as NOT successfully activated.
+            val armFailures = rearmWithResult(context)
+            if (armFailures > 0) {
+                ZeaActivityLog.record(
+                    context,
+                    ZeaActivityEventType.PROTECTION_FAILURE,
+                    schedule.name,
+                    "schedule saved but $armFailures alarm(s) could not be armed",
+                    ZeaActivityResult.FAILURE
+                )
+                null
+            } else {
+                schedule
+            }
         } else {
             null
         }
     }
 
     suspend fun updateSchedule(context: Context, schedule: ZeaSchedule): Boolean {
+        if (!zeaScheduleIsValid(schedule)) return false
         val updated = load(context).map { existing ->
             if (existing.id == schedule.id) schedule else existing
         }
         return if (save(context, updated)) {
-            rearm(context)
-            true
+            val armFailures = rearmWithResult(context)
+            if (armFailures > 0) {
+                ZeaActivityLog.record(
+                    context,
+                    ZeaActivityEventType.PROTECTION_FAILURE,
+                    schedule.name,
+                    "schedule updated but $armFailures alarm(s) could not be armed",
+                    ZeaActivityResult.FAILURE
+                )
+                false
+            } else {
+                true
+            }
         } else {
             false
         }
@@ -243,6 +322,7 @@ object ZeaSchedules {
         val updated = load(context).filterNot { it.id == scheduleId }
         return if (save(context, updated)) {
             cancelAlarms(context, scheduleId)
+            clearOwnershipForSchedule(context, scheduleId)
             true
         } else {
             false
@@ -264,6 +344,14 @@ object ZeaSchedules {
      * current window, instead of clobbering it with a next-cycle START/END pair.
      */
     suspend fun rearm(context: Context) {
+        rearmWithResult(context)
+    }
+
+    /**
+     * Same as [rearm] but returns the number of alarms that could not be armed,
+     * so create/update callers can honestly report a degraded schedule.
+     */
+    suspend fun rearmWithResult(context: Context): Int {
         val schedules = load(context)
         var alarmFailures = 0
         for (schedule in schedules) {
@@ -315,6 +403,7 @@ object ZeaSchedules {
                 ZeaActivityResult.FAILURE
             )
         }
+        return alarmFailures
     }
 
     /**
@@ -341,44 +430,100 @@ object ZeaSchedules {
         val liveTargets = resolveInstalledTargets(context, schedule)
         (raw - liveTargets.toSet()).forEach { pruneTargetsForPackage(context, it) }
 
+        val now = System.currentTimeMillis()
+        val plan = zeaScheduleFirePlan(schedule, phase, now)
+
         var succeeded = 0
         var failed = 0
         var keptHidden = 0
+        var skipped = 0
         if (phase == PHASE_START) {
-            for (packageName in liveTargets) {
-                val app = zeaManagedAppFromPackage(context, packageName) ?: continue
-                val outcome = ZeaAppHideService.hideApp(context, app)
-                if (outcome.success) succeeded++ else failed++
-            }
-            // Arm ONLY the current cycle's END. Calling rearm() here would
-            // compute tomorrow's END and silently replace today's pending END.
-            val end = zeaScheduleEndAfter(schedule, System.currentTimeMillis())
-            val armed = armAlarm(context, schedule.id, PHASE_END, end)
-            if (!armed) {
-                ZeaActivityLog.record(
-                    context,
-                    ZeaActivityEventType.PROTECTION_FAILURE,
-                    schedule.name,
-                    "end-of-window alarm could not be armed; app may stay hidden until repaired",
-                    ZeaActivityResult.FAILURE
-                )
+            if (plan.action == ZeaScheduleAction.SKIP) {
+                // Delayed START: the window it belonged to has already ended.
+                // Hiding now would keep the app hidden until tomorrow's END,
+                // which is exactly the trap this reconciliation prevents.
+                skipped = liveTargets.size
+                val nextStart = zeaScheduleNextRun(schedule, now)
+                if (nextStart != null) {
+                    armAlarm(context, schedule.id, PHASE_START, nextStart)
+                    armAlarm(context, schedule.id, PHASE_END, zeaScheduleEndAfter(schedule, nextStart))
+                }
+            } else {
+                for (packageName in liveTargets) {
+                    val app = zeaManagedAppFromPackage(context, packageName) ?: continue
+                    // Capture pre-schedule state ONLY the first time this cycle
+                    // claims the package; later reconciliation must not clobber
+                    // the original manual state with schedule-produced state.
+                    if (ownershipFor(context, schedule.id, packageName) == null) {
+                        recordOwnership(
+                            context,
+                            schedule.id,
+                            packageName,
+                            ZeaScheduleOwnershipRecord(
+                                previousMode = app.hideMode,
+                                previousTimedEndEpochMillis = app.hiddenUntilEpochMillis
+                            )
+                        )
+                    }
+                    val outcome = ZeaAppHideService.hideApp(context, app)
+                    if (outcome.success) succeeded++ else failed++
+                }
+                // Arm ONLY the current cycle's END. Calling rearm() here would
+                // compute tomorrow's END and silently replace today's pending END.
+                val end = if (plan.endEpochMillis > now) plan.endEpochMillis
+                else zeaScheduleEndAfter(schedule, now)
+                val armed = armAlarm(context, schedule.id, PHASE_END, end)
+                if (!armed) {
+                    ZeaActivityLog.record(
+                        context,
+                        ZeaActivityEventType.PROTECTION_FAILURE,
+                        schedule.name,
+                        "end-of-window alarm could not be armed; app may stay hidden until repaired",
+                        ZeaActivityResult.FAILURE
+                    )
+                }
             }
         } else {
             for (packageName in liveTargets) {
-                if (isStillOwnedByOtherActiveSchedule(context, schedule, packageName)) {
-                    // Another active schedule still requires this app hidden;
-                    // keep it protected instead of blindly unhiding.
-                    keptHidden++
-                    continue
+                val prior = ownershipFor(context, schedule.id, packageName)
+                val overlapped = isStillOwnedByOtherActiveSchedule(context, schedule, packageName)
+                when (zeaScheduleEndPlan(prior, overlapped, now)) {
+                    ZeaScheduleEndAction.UNHIDE -> {
+                        val outcome = ZeaAppHideService.unhideApp(context, packageName)
+                        if (outcome.success) succeeded++ else failed++
+                        clearOwnership(context, schedule.id, packageName)
+                    }
+                    ZeaScheduleEndAction.RESTORE_HIDDEN -> {
+                        // Manually hidden before START: the schedule never owned
+                        // this state; leave it hidden and release the claim.
+                        keptHidden++
+                        clearOwnership(context, schedule.id, packageName)
+                    }
+                    ZeaScheduleEndAction.RESTORE_TIMED -> {
+                        val app = zeaManagedAppFromPackage(context, packageName) ?: continue
+                        val end = prior?.previousTimedEndEpochMillis ?: 0L
+                        val label = "until ${zeaSnapshotLabel(end)}"
+                        val outcome = ZeaAppHideService.hideAppForTime(
+                            context,
+                            app,
+                            ZeaTimedHideRequest(label = label, endEpochMillis = end)
+                        )
+                        if (outcome.success) succeeded++ else failed++
+                        clearOwnership(context, schedule.id, packageName)
+                    }
+                    ZeaScheduleEndAction.SKIP -> {
+                        // Another active schedule still requires this app hidden;
+                        // keep it protected instead of blindly unhiding.
+                        keptHidden++
+                    }
                 }
-                val outcome = ZeaAppHideService.unhideApp(context, packageName)
-                if (outcome.success) succeeded++ else failed++
             }
         }
 
         val summary = buildString {
             append("$phase: $succeeded succeeded, $failed failed")
-            if (keptHidden > 0) append(", $keptHidden kept hidden (overlapping schedule)")
+            if (keptHidden > 0) append(", $keptHidden kept hidden (overlap/prior state)")
+            if (skipped > 0) append(", $skipped skipped (delayed start, window already over)")
         }
         ZeaActivityLog.record(
             context,
@@ -561,6 +706,56 @@ object ZeaSchedules {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
+
+    private fun encodeOwnership(
+        ownership: Map<String, Map<String, ZeaScheduleOwnershipRecord>>
+    ): String {
+        val root = JSONObject()
+        ownership.forEach { (scheduleId, perSchedule) ->
+            val pkgObj = JSONObject()
+            perSchedule.forEach { (pkg, record) ->
+                pkgObj.put(
+                    pkg,
+                    JSONObject()
+                        .put("previousMode", record.previousMode.name)
+                        .put("previousTimedEnd", record.previousTimedEndEpochMillis)
+                )
+            }
+            root.put(scheduleId, pkgObj)
+        }
+        return root.toString()
+    }
+
+    private fun decodeOwnership(
+        raw: String
+    ): Map<String, Map<String, ZeaScheduleOwnershipRecord>> {
+        val root = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            return emptyMap()
+        }
+        val result = mutableMapOf<String, Map<String, ZeaScheduleOwnershipRecord>>()
+        val scheduleKeys = root.keys()
+        while (scheduleKeys.hasNext()) {
+            val scheduleId = scheduleKeys.next()
+            val pkgObj = root.optJSONObject(scheduleId) ?: continue
+            val perSchedule = mutableMapOf<String, ZeaScheduleOwnershipRecord>()
+            val pkgKeys = pkgObj.keys()
+            while (pkgKeys.hasNext()) {
+                val pkg = pkgKeys.next()
+                val recObj = pkgObj.optJSONObject(pkg) ?: continue
+                val mode = runCatching {
+                    ZeaHideMode.valueOf(recObj.optString("previousMode"))
+                }.getOrNull() ?: continue
+                perSchedule[pkg] = ZeaScheduleOwnershipRecord(
+                    previousMode = mode,
+                    previousTimedEndEpochMillis = recObj.optLong("previousTimedEnd")
+                )
+            }
+            if (perSchedule.isNotEmpty()) result[scheduleId] = perSchedule
+        }
+        return result
     }
 
     private fun encode(schedules: List<ZeaSchedule>): String {

@@ -50,7 +50,10 @@ data class ZeaProfileApplyResult(
     val unhiddenFailed: List<Pair<String, String>> = emptyList(),
     /** Members skipped because their state changed independently after the
      * profile claimed them; reversing them would destroy manual user state. */
-    val skipped: List<String> = emptyList()
+    val skipped: List<String> = emptyList(),
+    /** True when apps were changed but the ownership snapshot failed to
+     * persist; restoration ownership is at risk, never a clean success. */
+    val ownershipPersistFailed: Boolean = false
 )
 
 /**
@@ -82,13 +85,18 @@ object ZeaProfiles {
         val profiles = load(context)
         if (profiles.any { it.name.equals(cleanName, ignoreCase = true) }) return null
 
-        val hidden = withContext(Dispatchers.IO) {
-            loadPrivateApps(context).map { it.packageName }
-        }
         val timed = withContext(Dispatchers.IO) {
             loadTimedHides(context).associate { record ->
                 record.packageName to record.hiddenUntilEpochMillis
             }
+        }
+        // Timed apps keep their TIMED identity and deadline; they are never
+        // duplicated into the hidden list. hidden = private minus timed.
+        val timedKeys = timed.keys.mapTo(mutableSetOf()) { it.lowercase() }
+        val hidden = withContext(Dispatchers.IO) {
+            loadPrivateApps(context)
+                .map { it.packageName }
+                .filter { it.lowercase() !in timedKeys }
         }
         val profile = ZeaProfile(
             id = UUID.randomUUID().toString(),
@@ -137,8 +145,16 @@ object ZeaProfiles {
         return save(context, updated)
     }
 
+    /**
+     * Delete is blocked while the profile is active: its ownership snapshot
+     * must be consumed (via deactivate) before the record may disappear,
+     * otherwise restoration state would be lost with owned changes applied.
+     */
     suspend fun deleteProfile(context: Context, profileId: String): Boolean {
-        val updated = load(context).filterNot { it.id == profileId }
+        val profiles = load(context)
+        val target = profiles.firstOrNull { it.id == profileId } ?: return false
+        if (target.isActive) return false
+        val updated = profiles.filterNot { it.id == profileId }
         return save(context, updated)
     }
 
@@ -162,27 +178,29 @@ object ZeaProfiles {
         val hiddenFailed = mutableListOf<Pair<String, String>>()
         val timedSucceeded = mutableListOf<String>()
         val timedFailed = mutableListOf<Pair<String, String>>()
-        val ownership = mutableMapOf<String, ZeaProfileOwnershipSnapshot>()
+        // Repeated activation must never overwrite the original pre-profile
+        // snapshot: existing ownership is the restoration source of truth.
+        val ownership = profile.ownership.toMutableMap()
         val now = System.currentTimeMillis()
 
         // Permanent members: capture prior state, then hide.
         for (packageName in profile.hiddenPackages.distinct()) {
             val app = zeaManagedAppFromPackage(context, packageName) ?: continue
-            val prior = ZeaProfileOwnershipSnapshot(
-                previousMode = app.hideMode,
-                previousTimedEndEpochMillis = app.hiddenUntilEpochMillis,
-                appliedMode = ZeaHideMode.HIDDEN,
-                appliedTimedEndEpochMillis = 0L
-            )
+            if (!ownership.containsKey(packageName)) {
+                ownership[packageName] = ZeaProfileOwnershipSnapshot(
+                    previousMode = app.hideMode,
+                    previousTimedEndEpochMillis = app.hiddenUntilEpochMillis,
+                    appliedMode = ZeaHideMode.HIDDEN,
+                    appliedTimedEndEpochMillis = 0L
+                )
+            }
             if (app.hideMode == ZeaHideMode.HIDDEN) {
                 // Already hidden: owned for restore purposes, no op needed.
-                ownership[packageName] = prior
                 continue
             }
             val outcome = ZeaAppHideService.hideApp(context, app)
             if (outcome.success) {
                 hiddenSucceeded += packageName
-                ownership[packageName] = prior
             } else {
                 hiddenFailed += packageName to outcome.message
             }
@@ -192,12 +210,14 @@ object ZeaProfiles {
         for ((packageName, endEpoch) in profile.timedPackages) {
             if (endEpoch <= now) continue
             val app = zeaManagedAppFromPackage(context, packageName) ?: continue
-            val prior = ZeaProfileOwnershipSnapshot(
-                previousMode = app.hideMode,
-                previousTimedEndEpochMillis = app.hiddenUntilEpochMillis,
-                appliedMode = ZeaHideMode.TIMED,
-                appliedTimedEndEpochMillis = endEpoch
-            )
+            if (!ownership.containsKey(packageName)) {
+                ownership[packageName] = ZeaProfileOwnershipSnapshot(
+                    previousMode = app.hideMode,
+                    previousTimedEndEpochMillis = app.hiddenUntilEpochMillis,
+                    appliedMode = ZeaHideMode.TIMED,
+                    appliedTimedEndEpochMillis = endEpoch
+                )
+            }
             val label = "until ${zeaSnapshotLabel(endEpoch)}"
             val outcome = ZeaAppHideService.hideAppForTime(
                 context,
@@ -206,32 +226,38 @@ object ZeaProfiles {
             )
             if (outcome.success) {
                 timedSucceeded += packageName
-                ownership[packageName] = prior
             } else {
                 timedFailed += packageName to outcome.message
             }
         }
 
-        // Persist ownership so deactivation can restore safely.
+        // Persist ownership so deactivation can restore safely. A failed
+        // persist while apps were actually changed is reported as PARTIAL:
+        // the applied state is real but restoration ownership is at risk.
         val updatedProfiles = load(context).map { existing ->
             if (existing.id == profileId) existing.copy(ownership = ownership) else existing
         }
-        save(context, updatedProfiles)
+        val ownershipPersisted = save(context, updatedProfiles)
+        val ownershipPersistFailed =
+            !ownershipPersisted && (hiddenSucceeded.isNotEmpty() || timedSucceeded.isNotEmpty())
 
         val totalFailures = hiddenFailed.size + timedFailed.size
         ZeaActivityLog.record(
             context,
             ZeaActivityEventType.PROFILE_ACTIVATED,
             profile.name,
-            "applied: ${hiddenSucceeded.size} hidden, ${timedSucceeded.size} timed; $totalFailures failures",
-            if (totalFailures == 0) ZeaActivityResult.SUCCESS else ZeaActivityResult.PARTIAL
+            "applied: ${hiddenSucceeded.size} hidden, ${timedSucceeded.size} timed; $totalFailures failures" +
+                    if (ownershipPersistFailed) "; ownership persistence FAILED" else "",
+            if (totalFailures == 0 && !ownershipPersistFailed) ZeaActivityResult.SUCCESS
+            else ZeaActivityResult.PARTIAL
         )
 
         return ZeaProfileApplyResult(
             hiddenSucceeded = hiddenSucceeded,
             hiddenFailed = hiddenFailed,
             timedSucceeded = timedSucceeded,
-            timedFailed = timedFailed
+            timedFailed = timedFailed,
+            ownershipPersistFailed = ownershipPersistFailed
         )
     }
 
@@ -422,7 +448,7 @@ object ZeaProfiles {
     }
 }
 
-private fun zeaSnapshotLabel(endEpochMillis: Long): String {
+internal fun zeaSnapshotLabel(endEpochMillis: Long): String {
     val remaining = endEpochMillis - System.currentTimeMillis()
     val minutes = remaining / 60_000L
     val hours = minutes / 60L

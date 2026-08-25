@@ -52,17 +52,23 @@ object ZeaAppHideService {
             if (outcome.success) opLabel else "$opLabel (failed)"
         )
         if (outcome.success && previousMode != null) {
+            val operation = if (eventType == ZeaActivityEventType.TIMED_HIDE) {
+                UndoOperation.TIMED_HIDE
+            } else {
+                UndoOperation.HIDE
+            }
             ZeaUndo.record(
                 appContext,
                 packageName,
                 displayName,
-                if (eventType == ZeaActivityEventType.TIMED_HIDE) {
-                    UndoOperation.TIMED_HIDE
-                } else {
-                    UndoOperation.HIDE
-                },
+                operation,
                 previousMode,
-                timedEndEpochMillis
+                timedEndEpochMillis,
+                appliedTimedEndEpochMillis = if (operation == UndoOperation.TIMED_HIDE) {
+                    timedEndEpochMillis
+                } else {
+                    0L
+                }
             )
         }
     }
