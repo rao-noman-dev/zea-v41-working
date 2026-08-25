@@ -5,12 +5,22 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release signing is configured EXTERNALLY via an untracked, gitignored
+// `keystore.properties` file in the project root (see keystore.properties.example).
+// If the file is absent or incomplete, the release build is left unsigned —
+// it never silently falls back to the development debug keystore.
 val keystoreProps = Properties().apply {
     val propsFile = rootProject.file("keystore.properties")
     if (propsFile.exists()) {
         propsFile.inputStream().use { stream -> load(stream) }
     }
 }
+
+fun zeaHasReleaseSigning(props: Properties): Boolean =
+    props["storeFile"] != null &&
+            props["storePassword"] != null &&
+            props["keyAlias"] != null &&
+            props["keyPassword"] != null
 
 android {
     namespace = "com.raomuhammadnoman.zea"
@@ -25,24 +35,32 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = keystoreProps["storeFile"]?.let { file(it as String) } ?: file("/tmp/debug.keystore")
-            storePassword = keystoreProps["storePassword"] as String?
-            keyAlias = keystoreProps["keyAlias"] as String?
-            keyPassword = keystoreProps["keyPassword"] as String?
-            enableV2Signing = true
-            enableV3Signing = true
+        if (zeaHasReleaseSigning(keystoreProps)) {
+            create("externalRelease") {
+                storeFile = rootProject.file(keystoreProps["storeFile"] as String)
+                storePassword = keystoreProps["storePassword"] as String
+                keyAlias = keystoreProps["keyAlias"] as String
+                keyPassword = keystoreProps["keyPassword"] as String
+                enableV2Signing = true
+                enableV3Signing = true
+            }
         }
     }
 
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
+            // Signed ONLY when an external keystore.properties supplies all
+            // four fields. Otherwise the release APK stays unsigned — an
+            // honest failure, not a debug-keystore masquerading as release.
+            if (zeaHasReleaseSigning(keystoreProps)) {
+                signingConfig = signingConfigs.getByName("externalRelease")
+            }
             // Phase 2 (P1): the developer surface lives only in the debug
             // source set; release compiles a no-op stub instead.
         }
         getByName("debug") {
-            signingConfig = signingConfigs.getByName("release")
+            // Debug builds use the standard development debug signing config.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

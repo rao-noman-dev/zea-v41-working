@@ -1130,6 +1130,14 @@ fun ZeaApp() {
             // preserving the user's own pinning order.
             val installed = apps.map { it.packageName }.toSet()
             ZeaFavorites.pruneUninstalled(context, installed)
+            // Phase 3 schedules: any schedule still pointing at an uninstalled
+            // package is dead weight; prune and rearm so alarms cannot fire
+            // into ghosts.
+            ZeaSchedules.load(context).forEach { schedule ->
+                schedule.targetPackages
+                    .filter { it !in installed }
+                    .forEach { ZeaSchedules.pruneTargetsForPackage(context, it) }
+            }
             val favoritePackages = ZeaFavorites.load(context)
             homeFavorites = favoritePackages.mapNotNull { pkg ->
                 apps.firstOrNull { it.packageName.equals(pkg, ignoreCase = true) }
@@ -2240,6 +2248,14 @@ fun ZeaApp() {
                 onNavigate = { target -> appsRouteName = target.name },
                 onBack = {
                     appsRouteName = zeaAppsParentOf(appsRoute)?.name.orEmpty()
+                },
+                onOpenDetails = { packageName ->
+                    appsRouteName = ""
+                    appDetailsPackage = packageName
+                },
+                onOpenSearch = {
+                    appsRouteName = ""
+                    showSearchScreen = true
                 }
             )
             return@MaterialTheme
@@ -3061,6 +3077,15 @@ private suspend fun resumeInterruptedBatch(
         if (resumeTargets.isEmpty()) {
             return@withContext
         }
+
+        // History evidence: an interrupted batch is actually being resumed.
+        ZeaActivityLog.record(
+            context,
+            ZeaActivityEventType.RECOVERY,
+            "Interrupted batch",
+            "Resuming ${active.operation} for ${resumeTargets.size} remaining target(s)",
+            ZeaActivityResult.SUCCESS
+        )
 
         when (active.operation) {
             ZeaBatchJournal.OPERATION_UNHIDE -> {

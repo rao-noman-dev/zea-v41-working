@@ -110,6 +110,58 @@ fun zeaScheduleEndAfter(
 }
 
 /**
+ * If [nowEpochMillis] is inside the schedule's active hide window, returns the
+ * end of that CURRENT window. Returns null when the schedule is outside any
+ * active window (or disabled). This is the missed-active-window recovery hook:
+ * after reboot/time-change, a still-active window must not be lost.
+ */
+fun zeaScheduleActiveWindow(
+    schedule: ZeaSchedule,
+    nowEpochMillis: Long
+): Long? {
+    if (!schedule.enabled) return null
+
+    val calendar = Calendar.getInstance().apply { timeInMillis = nowEpochMillis }
+
+    val startEpochMillis: Long = when (schedule.kind) {
+        ZeaScheduleKind.ONE_TIME -> schedule.oneTimeStartEpochMillis
+        ZeaScheduleKind.DAILY -> Calendar.getInstance().apply {
+            timeInMillis = nowEpochMillis
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            set(Calendar.HOUR_OF_DAY, schedule.startMinuteOfDay / 60)
+            set(Calendar.MINUTE, schedule.startMinuteOfDay % 60)
+        }.timeInMillis
+        ZeaScheduleKind.WEEKDAYS -> {
+            val day = calendar.get(Calendar.DAY_OF_WEEK)
+            if (day !in Calendar.MONDAY..Calendar.FRIDAY) return null
+            Calendar.getInstance().apply {
+                timeInMillis = nowEpochMillis
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                set(Calendar.HOUR_OF_DAY, schedule.startMinuteOfDay / 60)
+                set(Calendar.MINUTE, schedule.startMinuteOfDay % 60)
+            }.timeInMillis
+        }
+        ZeaScheduleKind.CUSTOM_DAYS -> {
+            if (schedule.daysOfWeek.isEmpty()) return null
+            val day = calendar.get(Calendar.DAY_OF_WEEK)
+            if (day !in schedule.daysOfWeek) return null
+            Calendar.getInstance().apply {
+                timeInMillis = nowEpochMillis
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                set(Calendar.HOUR_OF_DAY, schedule.startMinuteOfDay / 60)
+                set(Calendar.MINUTE, schedule.startMinuteOfDay % 60)
+            }.timeInMillis
+        }
+    }
+
+    val end = zeaScheduleEndAfter(schedule, startEpochMillis)
+    return if (nowEpochMillis >= startEpochMillis && nowEpochMillis < end) end else null
+}
+
+/**
  * Phase 3 recurring/scheduled hiding engine.
  *
  * Schedules persist in SharedPreferences; the engine arms one alarm per
@@ -202,65 +254,179 @@ object ZeaSchedules {
         return updateSchedule(context, schedule.copy(enabled = enabled))
     }
 
-    /** Rearms the single nearest pending alarm for every schedule. */
+    /**
+     * Rearms the two-phase alarm pair for every schedule.
+     *
+     * When the device booted (or the time changed) DURING a schedule's active
+     * window, the OLD code relied on the user waiting for the next day's start
+     * alarm — leaving protected apps visible until then. This rearm reconciles
+     * safely: it re-applies hide (idempotent) and arms ONLY the END of the
+     * current window, instead of clobbering it with a next-cycle START/END pair.
+     */
     suspend fun rearm(context: Context) {
         val schedules = load(context)
-        schedules.forEach { schedule ->
-            val nextStart = zeaScheduleNextRun(schedule, System.currentTimeMillis())
-            if (nextStart == null) {
+        var alarmFailures = 0
+        for (schedule in schedules) {
+            if (!schedule.enabled) {
                 cancelAlarms(context, schedule.id)
-                return@forEach
+                continue
             }
-            val end = zeaScheduleEndAfter(schedule, nextStart)
-            armAlarm(context, schedule.id, PHASE_START, nextStart)
-            armAlarm(context, schedule.id, PHASE_END, end)
+            val now = System.currentTimeMillis()
+            // Prune stale targets first so dead packages can never be armed.
+            val liveTargets = resolveInstalledTargets(context, schedule)
+            if (liveTargets.size != resolveTargets(context, schedule).size) {
+                val stalePackages = resolveTargets(context, schedule) - liveTargets.toSet()
+                stalePackages.forEach { pruneTargetsForPackage(context, it) }
+            }
+            val activeEnd = zeaScheduleActiveWindow(schedule, now)
+            if (activeEnd != null) {
+                // Still within the active window: the START alarm already
+                // passed (or was missed by reboot/time-change). Reconcile the
+                // intended current state — re-apply hide (idempotent) so a
+                // device reboot inside the window does not leave apps visible
+                // until the next day's START.
+                for (packageName in liveTargets) {
+                    val app = zeaManagedAppFromPackage(context, packageName) ?: continue
+                    if (app.hideMode == ZeaHideMode.VISIBLE) {
+                        ZeaAppHideService.hideApp(context, app)
+                    }
+                }
+                // The old START PendingIntent belongs to a previous cycle;
+                // cancel it so the engine only waits for the CURRENT END.
+                cancelAlarmPhase(context, schedule.id, PHASE_START)
+                if (!armAlarm(context, schedule.id, PHASE_END, activeEnd)) alarmFailures++
+            } else {
+                val nextStart = zeaScheduleNextRun(schedule, now)
+                if (nextStart == null) {
+                    cancelAlarms(context, schedule.id)
+                    continue
+                }
+                val end = zeaScheduleEndAfter(schedule, nextStart)
+                if (!armAlarm(context, schedule.id, PHASE_START, nextStart)) alarmFailures++
+                if (!armAlarm(context, schedule.id, PHASE_END, end)) alarmFailures++
+            }
+        }
+        if (alarmFailures > 0) {
+            ZeaActivityLog.record(
+                context,
+                ZeaActivityEventType.PROTECTION_FAILURE,
+                "schedule rearm",
+                "$alarmFailures alarm(s) could not be armed; schedule behavior is degraded",
+                ZeaActivityResult.FAILURE
+            )
         }
     }
 
-    /** Executes a fired start/end phase through the verified engines. */
+    /**
+     * Executes a fired start/end phase through the verified engines.
+     *
+     * Critical invariant: after START, only the END of THIS cycle is armed —
+     * rearm() must NOT be called here, because rearm-ing the next cycle's
+     * END PendingIntent would destroy the pending END alarm. The next cycle's
+     * START/END pair is armed by rearm() when the current END fires.
+     */
     suspend fun onFire(
         context: Context,
         scheduleId: String,
         phase: String
     ) {
         val schedule = load(context).firstOrNull { it.id == scheduleId } ?: return
-        val targetPackages = resolveTargets(context, schedule)
-        if (targetPackages.isEmpty()) return
+        if (!schedule.enabled) {
+            cancelAlarms(context, schedule.id)
+            return
+        }
+        // Stale targets: drop any package that is no longer installed so the
+        // engine can never block on a ghost.
+        val raw = resolveTargets(context, schedule)
+        val liveTargets = resolveInstalledTargets(context, schedule)
+        (raw - liveTargets.toSet()).forEach { pruneTargetsForPackage(context, it) }
 
         var succeeded = 0
         var failed = 0
+        var keptHidden = 0
         if (phase == PHASE_START) {
-            for (packageName in targetPackages) {
+            for (packageName in liveTargets) {
                 val app = zeaManagedAppFromPackage(context, packageName) ?: continue
                 val outcome = ZeaAppHideService.hideApp(context, app)
                 if (outcome.success) succeeded++ else failed++
             }
+            // Arm ONLY the current cycle's END. Calling rearm() here would
+            // compute tomorrow's END and silently replace today's pending END.
+            val end = zeaScheduleEndAfter(schedule, System.currentTimeMillis())
+            val armed = armAlarm(context, schedule.id, PHASE_END, end)
+            if (!armed) {
+                ZeaActivityLog.record(
+                    context,
+                    ZeaActivityEventType.PROTECTION_FAILURE,
+                    schedule.name,
+                    "end-of-window alarm could not be armed; app may stay hidden until repaired",
+                    ZeaActivityResult.FAILURE
+                )
+            }
         } else {
-            for (packageName in targetPackages) {
+            for (packageName in liveTargets) {
+                if (isStillOwnedByOtherActiveSchedule(context, schedule, packageName)) {
+                    // Another active schedule still requires this app hidden;
+                    // keep it protected instead of blindly unhiding.
+                    keptHidden++
+                    continue
+                }
                 val outcome = ZeaAppHideService.unhideApp(context, packageName)
                 if (outcome.success) succeeded++ else failed++
             }
         }
 
+        val summary = buildString {
+            append("$phase: $succeeded succeeded, $failed failed")
+            if (keptHidden > 0) append(", $keptHidden kept hidden (overlapping schedule)")
+        }
         ZeaActivityLog.record(
             context,
             ZeaActivityEventType.SCHEDULE_FIRED,
             schedule.name,
-            "$phase: $succeeded succeeded, $failed failed",
+            summary,
             when {
                 failed == 0 -> ZeaActivityResult.SUCCESS
-                succeeded == 0 -> ZeaActivityResult.FAILURE
+                succeeded == 0 && keptHidden == 0 -> ZeaActivityResult.FAILURE
                 else -> ZeaActivityResult.PARTIAL
             }
         )
 
-        // One-time schedules disable themselves only after the end phase
-        // has fired; disabling at START would leave the app hidden forever.
-        if (schedule.kind == ZeaScheduleKind.ONE_TIME && phase == PHASE_END) {
-            updateSchedule(context, schedule.copy(enabled = false))
-            return
+        if (phase == PHASE_END) {
+            // The still-needed END has completed; ONE_TIME now disables itself
+            // (disabling at START would leave the app hidden forever), and
+            // recurring schedules arm the NEXT cycle only here.
+            if (schedule.kind == ZeaScheduleKind.ONE_TIME) {
+                updateSchedule(context, schedule.copy(enabled = false))
+            } else {
+                rearm(context)
+            }
         }
-        rearm(context)
+    }
+
+    private suspend fun resolveInstalledTargets(
+        context: Context,
+        schedule: ZeaSchedule
+    ): List<String> = withContext(Dispatchers.IO) {
+        val installed = ZeaAppCatalog.loadManagedApps(context)
+            .map { it.packageName }
+            .toSet()
+        resolveTargets(context, schedule).filter { it in installed }
+    }
+
+    /** True when another ACTIVE schedule still claims this package right now. */
+    private suspend fun isStillOwnedByOtherActiveSchedule(
+        context: Context,
+        endingSchedule: ZeaSchedule,
+        packageName: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        load(context).any { other ->
+            other.id != endingSchedule.id &&
+                    other.enabled &&
+                    zeaScheduleActiveWindow(other, now) != null &&
+                    resolveTargets(context, other).contains(packageName)
+        }
     }
 
     private suspend fun resolveTargets(
@@ -274,38 +440,60 @@ object ZeaSchedules {
     }
 
     suspend fun pruneTargetsForGroup(context: Context, groupId: String): Boolean {
-        val updated = load(context).filterNot { it.targetGroupId == groupId }
-        return if (updated.size != load(context).size) {
-            save(context, updated)
+        val before = load(context)
+        val prunedIds = before.filter { it.targetGroupId == groupId }.map { it.id }
+        val updated = before.filterNot { it.targetGroupId == groupId }
+        return if (updated.size != before.size) {
+            val saved = save(context, updated)
+            if (saved) {
+                // Dead schedules are cancelled outright; survivors rearm.
+                prunedIds.forEach { cancelAlarms(context, it) }
+                rearm(context)
+            }
+            saved
         } else {
             true
         }
     }
 
     suspend fun pruneTargetsForPackage(context: Context, packageName: String): Boolean {
-        val updated = load(context).map { schedule ->
+        val before = load(context)
+        val updated = before.map { schedule ->
             schedule.copy(targetPackages = schedule.targetPackages - packageName)
         }.filter { schedule ->
             schedule.targetGroupId != null || schedule.targetPackages.isNotEmpty()
         }
-        return if (updated != load(context)) {
-            save(context, updated)
+        return if (updated != before) {
+            val saved = save(context, updated)
+            if (saved) {
+                // A schedule that lost its last target is now dead; cancel its
+                // alarms so it cannot still fire into a nonexistent target.
+                val killed = before.map { it.id } - updated.map { it.id }.toSet()
+                killed.forEach { cancelAlarms(context, it) }
+                rearm(context)
+            }
+            saved
         } else {
             true
         }
     }
 
+    /**
+     * Arms a single phase. Returns true when the alarm was actually armed, so
+     * callers can honestly report a degraded schedule instead of pretending
+     * the schedule was enabled when its alarm never registered.
+     */
     private fun armAlarm(
         context: Context,
         scheduleId: String,
         phase: String,
         triggerAtMillis: Long
-    ) {
-        if (triggerAtMillis <= System.currentTimeMillis()) return
+    ): Boolean {
+        if (triggerAtMillis <= System.currentTimeMillis()) return false
         val appContext = context.applicationContext
-        val alarmManager = appContext.getSystemService(AlarmManager::class.java) ?: return
+        val alarmManager = appContext.getSystemService(AlarmManager::class.java) ?: return false
         val pendingIntent = pendingIntentFor(appContext, scheduleId, phase)
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 !alarmManager.canScheduleExactAlarms()
             ) {
@@ -321,6 +509,7 @@ object ZeaSchedules {
                     pendingIntent
                 )
             }
+            true
         } catch (error: SecurityException) {
             Log.w("ZeaSchedules", "exact schedule alarm denied for $scheduleId", error)
             try {
@@ -329,24 +518,30 @@ object ZeaSchedules {
                     triggerAtMillis,
                     pendingIntent
                 )
+                true
             } catch (fallback: RuntimeException) {
                 Log.e("ZeaSchedules", "schedule fallback alarm failed for $scheduleId", fallback)
+                false
             }
         } catch (error: RuntimeException) {
             Log.e("ZeaSchedules", "schedule alarm failed for $scheduleId", error)
+            false
+        }
+    }
+
+    private fun cancelAlarmPhase(context: Context, scheduleId: String, phase: String) {
+        val appContext = context.applicationContext
+        val alarmManager = appContext.getSystemService(AlarmManager::class.java) ?: return
+        try {
+            alarmManager.cancel(pendingIntentFor(appContext, scheduleId, phase))
+        } catch (_: RuntimeException) {
+            // Cancel is best-effort; stale alarms no-op when the schedule is gone.
         }
     }
 
     private fun cancelAlarms(context: Context, scheduleId: String) {
-        val appContext = context.applicationContext
-        val alarmManager = appContext.getSystemService(AlarmManager::class.java) ?: return
-        listOf(PHASE_START, PHASE_END).forEach { phase ->
-            try {
-                alarmManager.cancel(pendingIntentFor(appContext, scheduleId, phase))
-            } catch (_: RuntimeException) {
-                // Cancel is best-effort; stale alarms no-op when the schedule is gone.
-            }
-        }
+        cancelAlarmPhase(context, scheduleId, PHASE_START)
+        cancelAlarmPhase(context, scheduleId, PHASE_END)
     }
 
     private fun pendingIntentFor(

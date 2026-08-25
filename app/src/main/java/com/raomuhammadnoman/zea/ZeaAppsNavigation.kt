@@ -63,12 +63,17 @@ fun zeaAppsParentOf(route: ZeaAppsRoute): ZeaAppsRoute? = when (route) {
 fun ZeaAppsNavigationHost(
     route: ZeaAppsRoute,
     onNavigate: (ZeaAppsRoute) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenDetails: (String) -> Unit = {},
+    onOpenSearch: () -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
 
     when (route) {
-        ZeaAppsRoute.HUB -> ZeaAppsHubScreen(onNavigate = onNavigate)
+        ZeaAppsRoute.HUB -> ZeaAppsHubScreen(
+            onNavigate = onNavigate,
+            onOpenSearch = onOpenSearch
+        )
         ZeaAppsRoute.ALL_APPS -> ZeaAllAppsScreen(
             onBack = onBack,
             onNavigate = onNavigate
@@ -79,7 +84,8 @@ fun ZeaAppsNavigationHost(
         ) {
             ZeaHiddenAppsScreen(
                 onBack = onBack,
-                onNavigate = onNavigate
+                onNavigate = onNavigate,
+                onOpenDetails = onOpenDetails
             )
         }
         ZeaAppsRoute.TIMED_HIDDEN_APPS -> ZeaLockedAppsGate(
@@ -88,7 +94,8 @@ fun ZeaAppsNavigationHost(
         ) {
             ZeaTimedHiddenAppsScreen(
                 onBack = onBack,
-                onNavigate = onNavigate
+                onNavigate = onNavigate,
+                onOpenDetails = onOpenDetails
             )
         }
     }

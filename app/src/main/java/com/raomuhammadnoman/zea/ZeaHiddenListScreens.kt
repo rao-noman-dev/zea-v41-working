@@ -64,7 +64,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ZeaHiddenAppsScreen(
     onBack: () -> Unit,
-    onNavigate: (ZeaAppsRoute) -> Unit
+    onNavigate: (ZeaAppsRoute) -> Unit,
+    onOpenDetails: (String) -> Unit = {}
 ) {
     ZeaHiddenListScreen(
         title = "Hidden Apps",
@@ -75,7 +76,8 @@ fun ZeaHiddenAppsScreen(
         footerText = "Tap an app to open it. Long-press to manage.",
         mode = ZeaHideMode.HIDDEN,
         onBack = onBack,
-        onNavigate = onNavigate
+        onNavigate = onNavigate,
+        onOpenDetails = onOpenDetails
     )
 }
 
@@ -86,7 +88,8 @@ fun ZeaHiddenAppsScreen(
 @Composable
 fun ZeaTimedHiddenAppsScreen(
     onBack: () -> Unit,
-    onNavigate: (ZeaAppsRoute) -> Unit
+    onNavigate: (ZeaAppsRoute) -> Unit,
+    onOpenDetails: (String) -> Unit = {}
 ) {
     ZeaHiddenListScreen(
         title = "Timed Hidden Apps",
@@ -97,7 +100,8 @@ fun ZeaTimedHiddenAppsScreen(
         footerText = "Apps will unhide automatically when the timer ends.",
         mode = ZeaHideMode.TIMED,
         onBack = onBack,
-        onNavigate = onNavigate
+        onNavigate = onNavigate,
+        onOpenDetails = onOpenDetails
     )
 }
 
@@ -111,7 +115,8 @@ private fun ZeaHiddenListScreen(
     footerText: String,
     mode: ZeaHideMode,
     onBack: () -> Unit,
-    onNavigate: (ZeaAppsRoute) -> Unit
+    onNavigate: (ZeaAppsRoute) -> Unit,
+    onOpenDetails: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -654,6 +659,11 @@ private fun ZeaHiddenListScreen(
                     outcomeMessage = outcome.message
                     reloadToken++
                 }
+            },
+            onViewDetails = {
+                val pkg = activeTimedManageApp.packageName
+                timedManageApp = null
+                onOpenDetails(pkg)
             }
         )
     }
@@ -846,8 +856,12 @@ private fun ZeaTimedManageDialog(
     onReduce: (Long) -> Unit,
     onChangeEnd: (Long) -> Unit,
     onCancelTimer: () -> Unit,
-    onConvertToPermanent: () -> Unit
+    onConvertToPermanent: () -> Unit,
+    onViewDetails: () -> Unit
 ) {
+    var newEndHour by remember { mutableStateOf("") }
+    var newEndMinute by remember { mutableStateOf("") }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Manage ${app.displayName}") },
@@ -871,11 +885,52 @@ private fun ZeaTimedManageDialog(
                 TextButton(onClick = { onReduce(60) }) {
                     Text("Reduce by 1 hour")
                 }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Change end time", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = newEndHour,
+                        onValueChange = { newEndHour = it.filter { c -> c.isDigit() }.take(2) },
+                        label = { Text("Hour") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.height(0.dp))
+                    OutlinedTextField(
+                        value = newEndMinute,
+                        onValueChange = { newEndMinute = it.filter { c -> c.isDigit() }.take(2) },
+                        label = { Text("Minute") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        val hour = newEndHour.toIntOrNull()?.coerceIn(0, 23)
+                        val minute = (newEndMinute.toIntOrNull() ?: 0).coerceIn(0, 59)
+                        if (hour != null) {
+                            val calendar = java.util.Calendar.getInstance().apply {
+                                set(java.util.Calendar.SECOND, 0)
+                                set(java.util.Calendar.MILLISECOND, 0)
+                                set(java.util.Calendar.HOUR_OF_DAY, hour)
+                                set(java.util.Calendar.MINUTE, minute)
+                            }
+                            if (calendar.timeInMillis <= System.currentTimeMillis()) {
+                                calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                            }
+                            onChangeEnd(calendar.timeInMillis)
+                        }
+                    }) {
+                        Text("Apply")
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
                 TextButton(onClick = onCancelTimer) {
                     Text("Cancel timer (unhide now)")
                 }
                 TextButton(onClick = onConvertToPermanent) {
                     Text("Convert to permanent hidden")
+                }
+                TextButton(onClick = onViewDetails) {
+                    Text("View details")
                 }
             }
         },

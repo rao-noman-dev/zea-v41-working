@@ -47,7 +47,8 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 fun ZeaAppsHubScreen(
-    onNavigate: (ZeaAppsRoute) -> Unit
+    onNavigate: (ZeaAppsRoute) -> Unit,
+    onOpenSearch: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var allAppsCount by remember { mutableStateOf<Int?>(null) }
@@ -113,10 +114,7 @@ fun ZeaAppsHubScreen(
                     modifier = Modifier.weight(1f)
                 )
 
-                IconButton(
-                    onClick = {},
-                    enabled = false
-                ) {
+                IconButton(onClick = onOpenSearch) {
                     Icon(
                         imageVector = ZeaIcons.Search,
                         contentDescription = "Search apps"

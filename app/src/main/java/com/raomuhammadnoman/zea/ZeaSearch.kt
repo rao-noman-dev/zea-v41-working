@@ -36,8 +36,10 @@ object ZeaSearch {
 
         val results = mutableListOf<ZeaSearchResult>()
 
-        // Apps
+        // Apps — subtitle reports the coherent CURRENT status, not just the
+        // package name: Visible / Hidden / Timed (+ remaining) / Protected.
         val apps = ZeaAppCatalog.loadManagedApps(context)
+        val now = System.currentTimeMillis()
         apps.forEach { app ->
             if (app.displayName.lowercase().contains(lowerQuery) ||
                 app.packageName.lowercase().contains(lowerQuery)
@@ -45,7 +47,7 @@ object ZeaSearch {
                 results += ZeaSearchResult(
                     kind = ZeaSearchResultKind.APP,
                     title = app.displayName,
-                    subtitle = app.packageName,
+                    subtitle = zeaSearchStatusLabel(app, now),
                     targetId = app.packageName,
                     routeHint = "app_details:${app.packageName}"
                 )
@@ -113,4 +115,26 @@ object ZeaSearch {
 
         results
     }
+}
+
+/**
+ * Coherent CURRENT status line for one app, pure so it is unit testable:
+ * Visible / Hidden / Timed (with remaining minutes) plus a Protected suffix
+ * for non-manageable packages.
+ */
+internal fun zeaSearchStatusLabel(
+    app: ZeaManagedApp,
+    nowEpochMillis: Long
+): String {
+    val status = when (app.hideMode) {
+        ZeaHideMode.VISIBLE -> "Visible"
+        ZeaHideMode.HIDDEN -> "Hidden"
+        ZeaHideMode.TIMED -> {
+            val remainingMinutes =
+                ((app.hiddenUntilEpochMillis - nowEpochMillis) / 60_000L).coerceAtLeast(0L)
+            "Timed ($remainingMinutes min left)"
+        }
+    }
+    val protection = if (!app.manageable) " • Protected" else ""
+    return "$status$protection"
 }

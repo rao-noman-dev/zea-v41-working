@@ -21,6 +21,44 @@ enum class UndoOperation {
 }
 
 /**
+ * What a Safe Undo reversal must do, decided by pure logic so it is unit
+ * testable without Android APIs.
+ *
+ * The critical invariant: a snapshot whose previous state was TIMED restores
+ * the prior end time (re-arm), and never degrades into a plain permanent
+ * hide; EXPIRED means the stored prior end is already past, so the reversal
+ * falls back to the permanent/visible branch deliberately.
+ */
+enum class ZeaUndoPlan {
+    UNHIDE,
+    HIDE_PERMANENT,
+    REARM_TIMER,
+    CONVERT_TO_PERMANENT,
+    EXPIRED
+}
+
+internal fun zeaUndoReversalPlan(
+    entry: ZeaUndoEntry,
+    nowEpochMillis: Long
+): ZeaUndoPlan = when (entry.operation) {
+    UndoOperation.HIDE -> ZeaUndoPlan.UNHIDE
+    UndoOperation.UNHIDE -> {
+        if (entry.previousMode == ZeaHideMode.TIMED) {
+            if (entry.timedEndEpochMillis > nowEpochMillis) ZeaUndoPlan.REARM_TIMER
+            else ZeaUndoPlan.EXPIRED
+        } else ZeaUndoPlan.HIDE_PERMANENT
+    }
+    UndoOperation.TIMED_HIDE -> when (entry.previousMode) {
+        ZeaHideMode.VISIBLE -> ZeaUndoPlan.UNHIDE
+        ZeaHideMode.TIMED -> {
+            if (entry.timedEndEpochMillis > nowEpochMillis) ZeaUndoPlan.REARM_TIMER
+            else ZeaUndoPlan.CONVERT_TO_PERMANENT
+        }
+        ZeaHideMode.HIDDEN -> ZeaUndoPlan.CONVERT_TO_PERMANENT
+    }
+}
+
+/**
  * Phase 3 Safe Undo: a single operation snapshot, valid for 5 minutes, always
  * reversed through the same verified hide/unhide engines. Only offered when
  * the reversal is currently safe.
@@ -99,19 +137,32 @@ object ZeaUndo {
                 message = "The app is no longer installed; undo is not possible."
             )
 
-        val outcome = when (entry.operation) {
-            UndoOperation.HIDE -> ZeaAppHideService.unhideApp(context, entry.packageName)
-            UndoOperation.UNHIDE -> ZeaAppHideService.hideApp(context, app)
-            UndoOperation.TIMED_HIDE -> {
-                // Undoing a timed hide means removing the timer entirely: the
-                // app returns to the permanent state it had before the timer
-                // was armed (or stays hidden if it was visible before).
-                if (entry.previousMode == ZeaHideMode.VISIBLE) {
-                    ZeaAppHideService.unhideApp(context, entry.packageName)
-                } else {
-                    ZeaAppHideService.convertTimedHideToPermanent(context, entry.packageName)
-                }
-            }
+        val plan = zeaUndoReversalPlan(entry, System.currentTimeMillis())
+        val outcome = when (plan) {
+            ZeaUndoPlan.UNHIDE ->
+                ZeaAppHideService.unhideApp(context, entry.packageName)
+            ZeaUndoPlan.HIDE_PERMANENT ->
+                ZeaAppHideService.hideApp(context, app)
+            ZeaUndoPlan.REARM_TIMER ->
+                // Restoring a TIMED previous state re-arms the original end
+                // time; it never degrades into a plain permanent hide.
+                ZeaAppHideService.hideAppForTime(
+                    context,
+                    app,
+                    ZeaTimedHideRequest(
+                        label = "undo restore",
+                        endEpochMillis = entry.timedEndEpochMillis
+                    )
+                )
+            ZeaUndoPlan.CONVERT_TO_PERMANENT ->
+                ZeaAppHideService.convertTimedHideToPermanent(
+                    context,
+                    entry.packageName
+                )
+            ZeaUndoPlan.EXPIRED -> ZeaHideOutcome(
+                success = false,
+                message = "The recorded timer has already expired; undo is no longer meaningful."
+            )
         }
         if (outcome.success) {
             clear(context)

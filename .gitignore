@@ -3,6 +3,9 @@
 build/
 app/build/
 local.properties
+keystore.properties
+*.keystore
+*.jks
 *.iml
 *.hprof
 /zee_v0_1_app/

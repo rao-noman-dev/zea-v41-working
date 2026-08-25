@@ -52,6 +52,7 @@ fun ZeaProfilesScreen(onBack: () -> Unit) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<ZeaProfile?>(null) }
     var deleteTarget by remember { mutableStateOf<ZeaProfile?>(null) }
+    var editTarget by remember { mutableStateOf<ZeaProfile?>(null) }
     var operationMessage by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
@@ -131,10 +132,14 @@ fun ZeaProfilesScreen(onBack: () -> Unit) {
                             onDeactivate = {
                                 scope.launch {
                                     val result = ZeaProfiles.deactivateProfile(context, profile.id)
-                                    operationMessage = "Deactivated; ${result.hiddenSucceeded.size} unhidden, ${result.hiddenFailed.size} failures."
+                                    val failures = result.unhiddenFailed.size + result.timedFailed.size
+                                    operationMessage = "Deactivated; ${result.unhiddenSucceeded.size} unhidden, " +
+                                            "${result.timedSucceeded.size} timed restored, " +
+                                            "${result.skipped.size} skipped (independent state), $failures failures."
                                     refresh()
                                 }
                             },
+                            onEdit = { editTarget = profile },
                             onRename = { renameTarget = profile },
                             onDelete = { deleteTarget = profile },
                             onDuplicate = {
@@ -211,6 +216,25 @@ fun ZeaProfilesScreen(onBack: () -> Unit) {
             }
         )
     }
+
+    editTarget?.let { target ->
+        ZeaProfileEditDialog(
+            profile = target,
+            onDismiss = { editTarget = null },
+            onSave = { hidden, timed ->
+                scope.launch {
+                    val updated = target.copy(
+                        hiddenPackages = hidden,
+                        timedPackages = timed
+                    )
+                    ZeaProfiles.updateProfile(context, updated)
+                    editTarget = null
+                    operationMessage = "Profile membership updated. Activate to apply."
+                    refresh()
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -218,6 +242,7 @@ private fun ZeaProfileCard(
     profile: ZeaProfile,
     onActivate: () -> Unit,
     onDeactivate: () -> Unit,
+    onEdit: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onDuplicate: () -> Unit
@@ -239,7 +264,8 @@ private fun ZeaProfileCard(
                     fontSize = 16.sp
                 )
                 Text(
-                    text = "${profile.hiddenPackages.size} hidden, ${profile.timedPackages.size} timed",
+                    text = "${profile.hiddenPackages.size} hidden, ${profile.timedPackages.size} timed" +
+                            if (profile.isActive) " — active" else "",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
@@ -249,6 +275,9 @@ private fun ZeaProfileCard(
                     }
                     TextButton(onClick = onDeactivate) {
                         Text("Deactivate")
+                    }
+                    TextButton(onClick = onEdit) {
+                        Text("Edit")
                     }
                     TextButton(onClick = onRename) {
                         Text("Rename")
@@ -286,6 +315,98 @@ private fun ZeaProfileNameDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(value) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+/**
+ * Edit Profile flow: the user can actually change the profile's membership.
+ * Hidden members are toggled with checkboxes over the installed app catalog;
+ * timed members are listed with their stored deadline and can be removed.
+ * Editing changes membership only — it never re-applies the profile.
+ */
+@Composable
+private fun ZeaProfileEditDialog(
+    profile: ZeaProfile,
+    onDismiss: () -> Unit,
+    onSave: (hidden: List<String>, timed: Map<String, Long>) -> Unit
+) {
+    val context = LocalContext.current
+    var apps by remember { mutableStateOf<List<ZeaManagedApp>>(emptyList()) }
+    var hiddenSelection by remember { mutableStateOf(profile.hiddenPackages.toSet()) }
+    var timedSelection by remember { mutableStateOf(profile.timedPackages) }
+
+    LaunchedEffect(profile.id) {
+        apps = ZeaAppCatalog.loadManagedApps(context)
+            .filter { it.manageable }
+            .sortedBy { it.displayName.lowercase() }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit \"${profile.name}\"") },
+        text = {
+            Column(modifier = Modifier.height(420.dp)) {
+                Text(
+                    text = "Check apps this profile hides. Timed members keep their deadline and can be removed below.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(apps, key = { it.packageName }) { app ->
+                        val isTimed = timedSelection.containsKey(app.packageName)
+                        val checked = hiddenSelection.contains(app.packageName) || isTimed
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            androidx.compose.material3.Checkbox(
+                                checked = checked,
+                                onCheckedChange = { isChecked ->
+                                    if (isChecked) {
+                                        hiddenSelection = hiddenSelection + app.packageName
+                                    } else {
+                                        hiddenSelection = hiddenSelection - app.packageName
+                                        timedSelection = timedSelection - app.packageName
+                                    }
+                                }
+                            )
+                            Column {
+                                Text(app.displayName, fontSize = 14.sp)
+                                Text(
+                                    text = if (isTimed) {
+                                        "timed until ${zeaFormatEpoch(timedSelection[app.packageName] ?: 0L)}"
+                                    } else {
+                                        app.packageName
+                                    },
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(
+                    hiddenSelection.filter { !timedSelection.containsKey(it) }.sorted(),
+                    timedSelection.filterKeys { key ->
+                        hiddenSelection.contains(key) || apps.any { it.packageName == key }
+                    }
+                )
+            }) {
                 Text("Save")
             }
         },

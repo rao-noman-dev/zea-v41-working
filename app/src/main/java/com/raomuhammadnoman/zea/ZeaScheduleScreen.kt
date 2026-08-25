@@ -52,6 +52,7 @@ fun ZeaScheduleScreen(onBack: () -> Unit) {
     var targetGroups by remember { mutableStateOf<List<ZeaGroup>>(emptyList()) }
     var showCreateDialog by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<ZeaSchedule?>(null) }
+    var editTarget by remember { mutableStateOf<ZeaSchedule?>(null) }
 
     LaunchedEffect(Unit) {
         schedules = ZeaSchedules.load(context)
@@ -117,6 +118,7 @@ fun ZeaScheduleScreen(onBack: () -> Unit) {
                                     refresh()
                                 }
                             },
+                            onEdit = { editTarget = schedule },
                             onDelete = { deleteTarget = schedule }
                         )
                     }
@@ -128,6 +130,7 @@ fun ZeaScheduleScreen(onBack: () -> Unit) {
     if (showCreateDialog) {
         ZeaScheduleCreateDialog(
             targetGroups = targetGroups,
+            existing = null,
             onDismiss = { showCreateDialog = false },
             onConfirm = { name, kind, days, start, end, groupId, packages, oneTime ->
                 scope.launch {
@@ -136,6 +139,35 @@ fun ZeaScheduleScreen(onBack: () -> Unit) {
                     )
                     if (created != null) {
                         showCreateDialog = false
+                        refresh()
+                    }
+                }
+            }
+        )
+    }
+
+    editTarget?.let { target ->
+        ZeaScheduleCreateDialog(
+            targetGroups = targetGroups,
+            existing = target,
+            onDismiss = { editTarget = null },
+            onConfirm = { name, kind, days, start, end, groupId, packages, oneTime ->
+                scope.launch {
+                    val saved = ZeaSchedules.updateSchedule(
+                        context,
+                        target.copy(
+                            name = name,
+                            kind = kind,
+                            daysOfWeek = days,
+                            startMinuteOfDay = start,
+                            endMinuteOfDay = end,
+                            targetGroupId = groupId,
+                            targetPackages = packages,
+                            oneTimeStartEpochMillis = oneTime
+                        )
+                    )
+                    if (saved) {
+                        editTarget = null
                         refresh()
                     }
                 }
@@ -172,8 +204,13 @@ fun ZeaScheduleScreen(onBack: () -> Unit) {
 private fun ZeaScheduleCard(
     schedule: ZeaSchedule,
     onToggle: (Boolean) -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val now = System.currentTimeMillis()
+    val activeEnd = zeaScheduleActiveWindow(schedule, now)
+    val nextRun = if (schedule.enabled) zeaScheduleNextRun(schedule, now) else null
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -200,21 +237,41 @@ private fun ZeaScheduleCard(
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
+                Text(
+                    text = when {
+                        activeEnd != null -> "Active now; ends ${zeaFormatEpoch(activeEnd)}"
+                        nextRun != null -> "Next run: ${zeaFormatEpoch(nextRun)}"
+                        else -> "Paused"
+                    },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                Row {
+                    TextButton(onClick = onEdit) {
+                        Text("Edit", fontSize = 12.sp)
+                    }
+                    TextButton(onClick = onDelete) {
+                        Text("Delete", fontSize = 12.sp)
+                    }
+                }
             }
             Switch(
                 checked = schedule.enabled,
                 onCheckedChange = { onToggle(it) }
             )
-            IconButton(onClick = onDelete) {
-                Text("Delete", fontSize = 12.sp)
-            }
         }
     }
 }
 
+/**
+ * Create/edit schedule dialog. Every engine-supported kind and target type is
+ * reachable here: one-time, daily, weekdays, custom days; group target or
+ * individual app targets; start/end times; custom day selection.
+ */
 @Composable
 private fun ZeaScheduleCreateDialog(
     targetGroups: List<ZeaGroup>,
+    existing: ZeaSchedule?,
     onDismiss: () -> Unit,
     onConfirm: (
         name: String,
@@ -227,48 +284,137 @@ private fun ZeaScheduleCreateDialog(
         oneTime: Long
     ) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var kind by remember { mutableStateOf(ZeaScheduleKind.DAILY) }
-    var startHour by remember { mutableStateOf("9") }
-    var endHour by remember { mutableStateOf("17") }
-    var groupId by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var kind by remember { mutableStateOf(existing?.kind ?: ZeaScheduleKind.DAILY) }
+    var startHour by remember { mutableStateOf(((existing?.startMinuteOfDay ?: 540) / 60).toString()) }
+    var endHour by remember { mutableStateOf(((existing?.endMinuteOfDay ?: 1020) / 60).toString()) }
+    var groupId by remember { mutableStateOf(existing?.targetGroupId) }
+    var selectedPackages by remember { mutableStateOf(existing?.targetPackages?.toSet() ?: emptySet()) }
+    var selectedDays by remember { mutableStateOf(existing?.daysOfWeek?.toSet() ?: emptySet()) }
+    var installedApps by remember { mutableStateOf<List<ZeaManagedApp>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        installedApps = ZeaAppCatalog.loadManagedApps(context)
+            .filter { it.manageable }
+            .sortedBy { it.displayName.lowercase() }
+    }
+
+    val dayLabels = listOf(
+        java.util.Calendar.SUNDAY to "Sun",
+        java.util.Calendar.MONDAY to "Mon",
+        java.util.Calendar.TUESDAY to "Tue",
+        java.util.Calendar.WEDNESDAY to "Wed",
+        java.util.Calendar.THURSDAY to "Thu",
+        java.util.Calendar.FRIDAY to "Fri",
+        java.util.Calendar.SATURDAY to "Sat"
+    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create Schedule") },
+        title = { Text(if (existing == null) "Create Schedule" else "Edit Schedule") },
         text = {
-            Column {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = startHour,
-                    onValueChange = { startHour = it.filter { c -> c.isDigit() } },
-                    label = { Text("Hide at hour (0-23)") },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = endHour,
-                    onValueChange = { endHour = it.filter { c -> c.isDigit() } },
-                    label = { Text("Unhide at hour (0-23)") },
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                if (targetGroups.isNotEmpty()) {
-                    Text("Group (optional)", fontSize = 12.sp)
-                    targetGroups.forEach { group ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = group.name,
-                                fontWeight = if (groupId == group.id) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 14.sp
-                            )
-                            TextButton(onClick = { groupId = group.id }) {
-                                Text("Select")
+            Column(modifier = Modifier.height(460.dp)) {
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    item {
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            label = { Text("Name") },
+                            singleLine = true
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Schedule kind", fontSize = 12.sp)
+                        Row {
+                            ZeaScheduleKind.entries.forEach { option ->
+                                TextButton(onClick = { kind = option }) {
+                                    Text(
+                                        text = option.label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (kind == option) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                        }
+                        if (kind == ZeaScheduleKind.CUSTOM_DAYS) {
+                            Text("Days", fontSize = 12.sp)
+                            Row {
+                                dayLabels.forEach { (day, label) ->
+                                    TextButton(onClick = {
+                                        selectedDays = if (selectedDays.contains(day)) {
+                                            selectedDays - day
+                                        } else {
+                                            selectedDays + day
+                                        }
+                                    }) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (selectedDays.contains(day)) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = startHour,
+                            onValueChange = { startHour = it.filter { c -> c.isDigit() } },
+                            label = { Text("Hide at hour (0-23)") },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = endHour,
+                            onValueChange = { endHour = it.filter { c -> c.isDigit() } },
+                            label = { Text("Unhide at hour (0-23)") },
+                            singleLine = true
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (targetGroups.isNotEmpty()) {
+                            Text("Group target (choose one, or pick apps below)", fontSize = 12.sp)
+                            targetGroups.forEach { group ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = group.name,
+                                        fontWeight = if (groupId == group.id) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 14.sp
+                                    )
+                                    TextButton(onClick = {
+                                        groupId = if (groupId == group.id) null else group.id
+                                    }) {
+                                        Text(if (groupId == group.id) "Selected" else "Select")
+                                    }
+                                }
+                            }
+                        }
+                        if (groupId == null) {
+                            Text("Individual apps", fontSize = 12.sp)
+                        }
+                    }
+                    if (groupId == null) {
+                        items(installedApps, key = { it.packageName }) { app ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.Checkbox(
+                                    checked = selectedPackages.contains(app.packageName),
+                                    onCheckedChange = { isChecked ->
+                                        selectedPackages = if (isChecked) {
+                                            selectedPackages + app.packageName
+                                        } else {
+                                            selectedPackages - app.packageName
+                                        }
+                                    }
+                                )
+                                Column {
+                                    Text(app.displayName, fontSize = 13.sp)
+                                    Text(
+                                        app.packageName,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -280,10 +426,35 @@ private fun ZeaScheduleCreateDialog(
                 val start = startHour.toIntOrNull()?.coerceIn(0, 23)?.times(60)
                 val end = endHour.toIntOrNull()?.coerceIn(0, 23)?.times(60)
                 if (start != null && end != null) {
-                    onConfirm(name, kind, emptyList(), start, end, groupId, emptyList(), 0L)
+                    val oneTime = if (kind == ZeaScheduleKind.ONE_TIME) {
+                        // One-time fires at the next occurrence of the chosen
+                        // start time: today if still ahead, otherwise tomorrow.
+                        val calendar = java.util.Calendar.getInstance().apply {
+                            set(java.util.Calendar.SECOND, 0)
+                            set(java.util.Calendar.MILLISECOND, 0)
+                            set(java.util.Calendar.HOUR_OF_DAY, start / 60)
+                            set(java.util.Calendar.MINUTE, start % 60)
+                        }
+                        if (calendar.timeInMillis <= System.currentTimeMillis()) {
+                            calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                        }
+                        calendar.timeInMillis
+                    } else {
+                        0L
+                    }
+                    onConfirm(
+                        name,
+                        kind,
+                        if (kind == ZeaScheduleKind.CUSTOM_DAYS) selectedDays.sorted() else emptyList(),
+                        start,
+                        end,
+                        groupId,
+                        if (groupId == null) selectedPackages.sorted() else emptyList(),
+                        oneTime
+                    )
                 }
             }) {
-                Text("Create")
+                Text(if (existing == null) "Create" else "Save")
             }
         },
         dismissButton = {

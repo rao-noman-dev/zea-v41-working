@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Phase 2 (P1) - PIN brute-force protection.
@@ -91,6 +92,19 @@ object ZeaPinLockout {
             editor.putLong(KEY_COOLDOWN_UNTIL, nowEpochMillis + cooldownMillis)
         }
         editor.apply()
+        if (cooldownMillis > 0L) {
+            // History evidence for every armed lockout window.
+            val appContext = context.applicationContext
+            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                ZeaActivityLog.record(
+                    appContext,
+                    ZeaActivityEventType.LOCKOUT,
+                    "PIN lockout",
+                    "Lockout armed after $attempts failed attempt(s)",
+                    ZeaActivityResult.FAILURE
+                )
+            }
+        }
         return cooldownMillis
     }
 

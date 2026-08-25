@@ -137,6 +137,7 @@ fun ZeaAppDetailsScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     ZeaAppDetailRow("State", currentApp.hideMode.name)
+                    ZeaAppDetailRow("Favorite", if (isFavorite) "Yes" else "No")
                     ZeaAppDetailRow("System app", if (currentApp.systemApp) "Yes" else "No")
                     ZeaAppDetailRow("Manageable", if (currentApp.manageable) "Yes" else "No")
                     if (currentApp.blockedReason.isNotEmpty()) {
@@ -144,6 +145,10 @@ fun ZeaAppDetailsScreen(
                     }
                     if (currentApp.hiddenUntilEpochMillis > 0) {
                         ZeaAppDetailRow("Hidden until", zeaFormatEpoch(currentApp.hiddenUntilEpochMillis))
+                        val remainingMinutes =
+                            ((currentApp.hiddenUntilEpochMillis - System.currentTimeMillis()) / 60_000L)
+                                .coerceAtLeast(0L)
+                        ZeaAppDetailRow("Remaining time", "$remainingMinutes min")
                     }
                     if (currentApp.firstInstallTimeEpochMillis > 0) {
                         ZeaAppDetailRow("Installed", zeaFormatEpoch(currentApp.firstInstallTimeEpochMillis))
@@ -178,6 +183,19 @@ fun ZeaAppDetailsScreen(
                 }
                 Button(onClick = { showTimeDialog = true }) {
                     Text("Hide for Time")
+                }
+            }
+            if (currentApp.launcherActivityName.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = {
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+                    if (launchIntent != null) {
+                        context.startActivity(launchIntent)
+                    } else {
+                        operationMessage = "No launchable activity found for this app."
+                    }
+                }) {
+                    Text("Launch app")
                 }
             }
         }

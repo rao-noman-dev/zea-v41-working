@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.util.Log
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class ZeaHideOutcome(
@@ -71,7 +72,8 @@ object ZeaAppHideService {
         displayName: String,
         packageName: String,
         outcome: ZeaHideOutcome,
-        previousMode: ZeaHideMode? = null
+        previousMode: ZeaHideMode? = null,
+        timedEndEpochMillis: Long = 0L
     ) {
         ZeaActivityLog.record(
             appContext,
@@ -92,7 +94,8 @@ object ZeaAppHideService {
                 packageName,
                 displayName,
                 UndoOperation.UNHIDE,
-                previousMode
+                previousMode,
+                timedEndEpochMillis
             )
         }
     }
@@ -109,6 +112,15 @@ object ZeaAppHideService {
 
         val ownerState = ZeaDeviceOwnerController.readUiState(appContext)
         if (!ownerState.isDeviceOwner) {
+            // History evidence: full protection was requested but the device
+            // owner grant that powers it is missing — a permission issue.
+            ZeaActivityLog.record(
+                appContext,
+                ZeaActivityEventType.PERMISSION_ISSUE,
+                app.displayName,
+                "Device owner is not granted; fell back to lock mode",
+                ZeaActivityResult.FAILURE
+            )
             return hideAppInLockMode(appContext, app).also { outcome ->
                 recordHideOutcome(
                     appContext,
@@ -516,7 +528,10 @@ object ZeaAppHideService {
                 outcome,
                 ZeaActivityEventType.TIMED_HIDE,
                 if (alreadyManaged) ZeaHideMode.TIMED else ZeaHideMode.VISIBLE,
-                request.endEpochMillis
+                // The snapshot stores the PRIOR end time (when re-timing) so a
+                // Safe Undo can restore the previous timer exactly, never the
+                // just-applied end and never a permanent state.
+                previousTimedRecord?.hiddenUntilEpochMillis ?: request.endEpochMillis
             )
         }
     }
@@ -566,13 +581,16 @@ object ZeaAppHideService {
         val target = recordsBefore.firstOrNull { stored ->
             stored.packageName.equals(packageName, ignoreCase = true)
         }
-        // Safe Undo snapshot needs the mode the app was in before this release.
-        val previousMode = withContext(Dispatchers.IO) {
-            if (loadTimedHides(appContext).any { stored ->
-                    stored.packageName.equals(packageName, ignoreCase = true)
-                }
-            ) ZeaHideMode.TIMED else ZeaHideMode.HIDDEN
+        // Safe Undo snapshot needs the mode the app was in before this release,
+        // including the prior timer's end time so an undo can re-arm it.
+        val previousTimedRecord = withContext(Dispatchers.IO) {
+            loadTimedHides(appContext).firstOrNull { stored ->
+                stored.packageName.equals(packageName, ignoreCase = true)
+            }
         }
+        val previousMode =
+            if (previousTimedRecord != null) ZeaHideMode.TIMED else ZeaHideMode.HIDDEN
+        val previousTimedEnd = previousTimedRecord?.hiddenUntilEpochMillis ?: 0L
         if (target == null) {
             // No record means this package was never released through the
             // normal path, yet it may still carry a leftover hidden state from
@@ -756,7 +774,8 @@ object ZeaAppHideService {
                 target.displayName,
                 target.packageName,
                 outcome,
-                previousMode
+                previousMode,
+                previousTimedEnd
             )
         }
     }
@@ -1223,6 +1242,16 @@ object ZeaAppHideService {
 
             if (adopted > 0) {
                 ZeaAppCatalog.invalidateCatalogCache()
+                // History evidence for the recovery sweep result.
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    ZeaActivityLog.record(
+                        appContext,
+                        ZeaActivityEventType.RECOVERY,
+                        "Orphan sweep",
+                        "Adopted $adopted orphaned hidden app(s) into the registry",
+                        ZeaActivityResult.SUCCESS
+                    )
+                }
             }
         } catch (error: RuntimeException) {
             Log.w(ZEA_DEVICE_OWNER_LOG_TAG, "orphan sweep aborted", error)
