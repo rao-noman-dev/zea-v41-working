@@ -6,14 +6,18 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.key
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -436,6 +440,8 @@ private fun zeaParseResultText(resultText: String): ZeaResultViewData {
     )
 }
 class MainActivity : FragmentActivity() {
+    private var autoLockScreenOffReceiver: BroadcastReceiver? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -460,9 +466,30 @@ class MainActivity : FragmentActivity() {
         // gate or screen reads them.
         ZeaSecurityState.load(this)
 
+        // Phase 2 auto-lock: restore the chosen policy, hook process
+        // lifecycle, and listen for screen-off events.
+        ZeaAutoLock.load(this)
+        ZeaAutoLock.attach(this)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(ZeaAutoLock.processObserver)
+        autoLockScreenOffReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                    ZeaAutoLock.onScreenOff(context)
+                }
+            }
+        }
+        registerReceiver(
+            autoLockScreenOffReceiver,
+            IntentFilter(Intent.ACTION_SCREEN_OFF)
+        )
+
         setContent {
-            ZeaAppLockGate(activity = this) {
-                ZeaApp()
+            // A bump of the auto-lock epoch recreates the whole gate so the
+            // session re-derives from scratch and lands on the PIN screen.
+            key(ZeaAutoLock.lockEpoch) {
+                ZeaAppLockGate(activity = this) {
+                    ZeaApp()
+                }
             }
         }
     }
@@ -476,6 +503,18 @@ class MainActivity : FragmentActivity() {
         ZeaDeviceOwnerController.uiInForeground = false
         ZeaDeviceOwnerController.flushPendingLauncherRefresh(applicationContext)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        autoLockScreenOffReceiver?.let { receiver ->
+            try {
+                unregisterReceiver(receiver)
+            } catch (_: RuntimeException) {
+                // Receiver may already be unregistered during teardown.
+            }
+        }
+        autoLockScreenOffReceiver = null
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1035,6 +1074,7 @@ fun ZeaApp() {
     var showDeveloperAccess by rememberSaveable { mutableStateOf(false) }
     var showDeveloperControls by rememberSaveable { mutableStateOf(false) }
     var showSettingsScreen by rememberSaveable { mutableStateOf(false) }
+    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     var homeMenuExpanded by remember { mutableStateOf(false) }
 
     var favoriteContactsInput by remember { mutableStateOf(loadFavoriteContacts(context)) }
@@ -2195,6 +2235,12 @@ fun ZeaApp() {
             return@MaterialTheme
         }
 
+        if (showDiagnostics) {
+            // Screenshot-protected diagnostics + emergency recovery.
+            ZeaDiagnosticsScreen(onBack = { showDiagnostics = false })
+            return@MaterialTheme
+        }
+
         if (showAboutScreen) {
             // Screenshot-protected About screen (FLAG_SECURE inside).
             ZeaAboutScreen(onBack = { showAboutScreen = false })
@@ -2391,6 +2437,19 @@ fun ZeaApp() {
                                     showSettingsScreen = true
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text("Diagnostics") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = ZeaIcons.Diagnostics,
+                                        contentDescription = null
+                                    )
+                                },
+                                onClick = {
+                                    homeMenuExpanded = false
+                                    showDiagnostics = true
+                                }
+                            )
                             ZeaHomeMenuPlaceholder(
                                 label = "Help & Support",
                                 icon = ZeaIcons.Help
@@ -2409,19 +2468,21 @@ fun ZeaApp() {
                                 }
                             )
 
-                            DropdownMenuItem(
-                                text = { Text("Developer Controls") },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = ZeaIcons.Developer,
-                                        contentDescription = null
-                                    )
-                                },
-                                onClick = {
-                                    homeMenuExpanded = false
-                                    showDeveloperAccess = true
-                                }
-                            )
+                            if (zeaDeveloperControlsEnabled) {
+                                DropdownMenuItem(
+                                    text = { Text("Developer Controls") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = ZeaIcons.Developer,
+                                            contentDescription = null
+                                        )
+                                    },
+                                    onClick = {
+                                        homeMenuExpanded = false
+                                        showDeveloperAccess = true
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -2461,6 +2522,12 @@ fun ZeaApp() {
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                ZeaProtectionHealthCard(
+                    onOpenDiagnostics = { showDiagnostics = true }
+                )
 
                 Spacer(modifier = Modifier.height(16.dp))
 

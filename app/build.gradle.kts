@@ -38,6 +38,8 @@ android {
     buildTypes {
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
+            // Phase 2 (P1): the developer surface lives only in the debug
+            // source set; release compiles a no-op stub instead.
         }
         getByName("debug") {
             signingConfig = signingConfigs.getByName("release")
@@ -46,6 +48,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -56,6 +59,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.9.2")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")

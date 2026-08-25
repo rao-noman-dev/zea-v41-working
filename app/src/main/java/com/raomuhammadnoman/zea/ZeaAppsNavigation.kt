@@ -171,30 +171,45 @@ private fun ZeaLockedAppsGate(
 
     val gateContext = LocalContext.current
 
+    var pinAttemptVersion by remember { mutableStateOf(0) }
+    val lockout = rememberZeaPinLockout(gateContext, pinAttemptVersion)
+    val effectiveSectionError = if (lockout.lockedOut) lockout.message else sectionPinError
+
     // Same in-app keypad view as the global launch lock - no system keyboard.
     ZeaPinEntryScreen(
         title = "$sectionTitle is locked",
         subtitle = "Enter your Zyro PIN to view this list.",
         buttonLabel = "Unlock",
         showBackButton = false,
-        errorText = sectionPinError,
+        errorText = effectiveSectionError,
         currentPage = null,
         totalPages = 1,
         fingerprintEnabled = ZeaSecurityState.fingerprintUnlockEnabled &&
                 ZeaSecurityState.securityEnabled,
         onFingerprintAuthenticated = {
+            ZeaPinLockout.recordSuccess(gateContext)
             unlocked = true
             sectionPinError = ""
         },
         onBack = { sectionPinError = "" },
         onSubmit = { enteredPin ->
-            if (verifyAdminPin(gateContext, enteredPin)) {
+            if (lockout.lockedOut) {
+                sectionPinError = lockout.message
+            } else if (verifyAdminPin(gateContext, enteredPin)) {
+                ZeaPinLockout.recordSuccess(gateContext)
                 unlocked = true
                 sectionPinError = ""
             } else {
-                sectionPinError = "Incorrect PIN. Please try again."
+                ZeaPinLockout.recordFailure(gateContext)
+                pinAttemptVersion++
+                sectionPinError = if (ZeaPinLockout.isLockedOut(gateContext)) {
+                    ZeaPinLockout.cooldownMessage(gateContext)
+                } else {
+                    "Incorrect PIN. Please try again."
+                }
             }
-        }
+        },
+        submitEnabled = !lockout.lockedOut
     )
 }
 

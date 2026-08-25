@@ -49,9 +49,22 @@ import androidx.fragment.app.FragmentActivity
  * automatically. It is a plain developer convenience gate, NOT a
  * cryptographically secure secret against APK reverse engineering.
  *
+ * Phase 2 (P1): this entire file lives in the DEBUG source set. Release
+ * builds compile a stub instead (app/src/release) that contains no key, no
+ * gate, and no controls - the developer surface is physically absent from
+ * production APKs.
+ *
  * Never expose the full key in normal UI, logs, analytics, or debug messages.
  */
 const val DEVELOPER_ACCESS_KEY = "ZyroDevAccessKey7Q2MX"
+
+/**
+ * Compile-time gate for every developer-only surface. Always true in this
+ * debug source set; the release stub compiles it to false so every
+ * developer entry point in shared code is dead-stripped from production.
+ */
+val zeaDeveloperControlsEnabled: Boolean
+    get() = true
 
 /**
  * 17-character helper key ("ZyroDevAccessKeyX") derived from the full key so

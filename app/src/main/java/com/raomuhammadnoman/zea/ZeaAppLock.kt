@@ -378,7 +378,8 @@ internal fun ZeaPinEntryScreen(
     onBack: () -> Unit,
     onSubmit: (String) -> Unit,
     fingerprintEnabled: Boolean = false,
-    onFingerprintAuthenticated: (() -> Unit)? = null
+    onFingerprintAuthenticated: (() -> Unit)? = null,
+    submitEnabled: Boolean = true
 ) {
     var pinInput by remember(title) { mutableStateOf("") }
     var localError by remember(title) { mutableStateOf("") }
@@ -490,6 +491,7 @@ internal fun ZeaPinEntryScreen(
 
         ZeaPrimaryCta(
             label = buttonLabel,
+            enabled = submitEnabled,
             onClick = {
                 val cleanPin = pinInput.trim()
                 if (cleanPin.length < ZYRO_PIN_MIN_LENGTH) {
@@ -1190,6 +1192,9 @@ fun ZeaAppLockGate(
         }
 
         ZeaPinGateStage.ENTER_PIN -> {
+            var pinAttemptVersion by remember(activity) { mutableStateOf(0) }
+            val lockout = rememberZeaPinLockout(context, pinAttemptVersion)
+            val effectiveGateError = if (lockout.lockedOut) lockout.message else gateErrorText
             ZeaPinEntryScreen(
                 title = ZeaTemporaryAppLockConfig.LOCKED_TITLE,
                 subtitle = if (fingerprintAllowedHere) {
@@ -1199,20 +1204,33 @@ fun ZeaAppLockGate(
                 },
                 buttonLabel = "Unlock",
                 showBackButton = false,
-                errorText = gateErrorText,
+                errorText = effectiveGateError,
                 currentPage = null,
                 totalPages = 1,
                 fingerprintEnabled = fingerprintAllowedHere,
-                onFingerprintAuthenticated = { performAuthenticatedUnlock() },
+                onFingerprintAuthenticated = {
+                    ZeaPinLockout.recordSuccess(context)
+                    performAuthenticatedUnlock()
+                },
                 onBack = { gateErrorText = "" },
                 onSubmit = { enteredPin ->
-                    if (verifyAdminPin(context, enteredPin)) {
+                    if (lockout.lockedOut) {
+                        gateErrorText = lockout.message
+                    } else if (verifyAdminPin(context, enteredPin)) {
+                        ZeaPinLockout.recordSuccess(context)
                         gateErrorText = ""
                         performAuthenticatedUnlock()
                     } else {
-                        gateErrorText = "Incorrect PIN. Please try again."
+                        ZeaPinLockout.recordFailure(context)
+                        pinAttemptVersion++
+                        gateErrorText = if (ZeaPinLockout.isLockedOut(context)) {
+                            ZeaPinLockout.cooldownMessage(context)
+                        } else {
+                            "Incorrect PIN. Please try again."
+                        }
                     }
-                }
+                },
+                submitEnabled = !lockout.lockedOut
             )
         }
 

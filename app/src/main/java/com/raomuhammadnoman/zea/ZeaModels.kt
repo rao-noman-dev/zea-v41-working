@@ -168,11 +168,6 @@ data class PendingWhatsAppMessage(
     val messageText: String
 )
 
-data class EncryptedPinValue(
-    val encryptedPin: String,
-    val iv: String
-)
-
 data class AppLockConfiguration(
     val enabled: Boolean,
     val relockAfterMillis: Long

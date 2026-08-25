@@ -4,8 +4,6 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,11 +16,7 @@ import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 
 internal object ZeaStorageContract {
@@ -285,9 +279,8 @@ fun saveAdminPin(context: Context, pin: String): Boolean {
 
     return try {
         val credential = createPinCredential(cleanPin)
-        val encryptedValue = encryptUserPin(cleanPin)
 
-        getZeaPrefs(context).edit()
+        val saved = getZeaPrefs(context).edit()
             .putString(
                 ZeaStorageContract.ADMIN_PIN_HASH,
                 Base64.encodeToString(credential.hash, Base64.NO_WRAP)
@@ -300,16 +293,15 @@ fun saveAdminPin(context: Context, pin: String): Boolean {
                 ZeaStorageContract.ADMIN_PIN_ITERATIONS,
                 credential.iterations
             )
-            .putString(
-                ZeaStorageContract.USER_PIN_ENCRYPTED,
-                encryptedValue.encryptedPin
-            )
-            .putString(
-                ZeaStorageContract.USER_PIN_IV,
-                encryptedValue.iv
-            )
+            .remove(ZeaStorageContract.USER_PIN_ENCRYPTED)
+            .remove(ZeaStorageContract.USER_PIN_IV)
             .remove(ZeaStorageContract.LEGACY_ADMIN_PIN_HASH)
             .commit()
+
+        if (saved) {
+            deleteUserPinSecretKey()
+        }
+        saved
     } catch (_: Exception) {
         false
     }
@@ -331,7 +323,7 @@ fun verifyAdminPin(context: Context, pin: String): Boolean {
     )
 
     if (versionedHash.isNotBlank() && versionedSalt.isNotBlank()) {
-        return verifyVersionedPin(
+        val verified = verifyVersionedPin(
             pin = cleanPin,
             encodedHash = versionedHash,
             encodedSalt = versionedSalt,
@@ -340,6 +332,12 @@ fun verifyAdminPin(context: Context, pin: String): Boolean {
                 defaultValue = ZeaStorageContract.PIN_DERIVATION_ITERATIONS
             )
         )
+        if (verified) {
+            // A successful verification proves the user knows the PIN, so any
+            // leftover reversible copy from older builds is no longer needed.
+            purgeReversiblePinStorage(context)
+        }
+        return verified
     }
 
     val legacyHash = preferences.readStringSafely(
@@ -370,94 +368,46 @@ fun adminPinStatusText(context: Context): String {
     }
 }
 
-fun getOrCreateUserPinSecretKey(): SecretKey {
-    val keyStore = KeyStore.getInstance("AndroidKeyStore")
-    keyStore.load(null)
-
-    val existingKey = keyStore.getKey(
-        ZeaStorageContract.PIN_KEYSTORE_ALIAS,
-        null
-    )
-
-    if (existingKey is SecretKey) {
-        return existingKey
+/**
+ * Deletes the legacy AndroidKeyStore key that older builds used to encrypt a
+ * reversible copy of the user PIN. Phase 2 removes reversible PIN storage
+ * entirely: the PIN now exists only as a salted PBKDF2 verifier, so this key
+ * and its ciphertext must never be recreated.
+ */
+private fun deleteUserPinSecretKey() {
+    try {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore")
+        keyStore.load(null)
+        keyStore.deleteEntry(ZeaStorageContract.PIN_KEYSTORE_ALIAS)
+    } catch (_: Exception) {
+        // Keystore cleanup is best-effort; the ciphertext is already gone.
     }
-
-    val keyGenerator = KeyGenerator.getInstance(
-        KeyProperties.KEY_ALGORITHM_AES,
-        "AndroidKeyStore"
-    )
-    val keySpec = KeyGenParameterSpec.Builder(
-        ZeaStorageContract.PIN_KEYSTORE_ALIAS,
-        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-    )
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        .setRandomizedEncryptionRequired(true)
-        .build()
-
-    keyGenerator.init(keySpec)
-    return keyGenerator.generateKey()
 }
 
-fun encryptUserPin(pin: String): EncryptedPinValue {
-    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-    cipher.init(Cipher.ENCRYPT_MODE, getOrCreateUserPinSecretKey())
-
-    val encryptedBytes = cipher.doFinal(pin.toByteArray(Charsets.UTF_8))
-
-    return EncryptedPinValue(
-        encryptedPin = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP),
-        iv = Base64.encodeToString(cipher.iv, Base64.NO_WRAP)
-    )
-}
-
-fun decryptUserPin(
-    encryptedPin: String,
-    iv: String
-): String {
-    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-    val ivBytes = Base64.decode(iv, Base64.NO_WRAP)
-    val encryptedBytes = Base64.decode(encryptedPin, Base64.NO_WRAP)
-
-    cipher.init(
-        Cipher.DECRYPT_MODE,
-        getOrCreateUserPinSecretKey(),
-        GCMParameterSpec(128, ivBytes)
-    )
-
-    return String(cipher.doFinal(encryptedBytes), Charsets.UTF_8)
-}
-
-fun canRevealSavedUserPin(context: Context): Boolean {
+/**
+ * One-way migration: removes any reversible encrypted PIN copy (and its
+ * keystore key) left behind by builds older than the Phase 2 security
+ * hardening. Runs automatically after a successful PIN verification and
+ * whenever a new PIN is saved.
+ */
+fun purgeReversiblePinStorage(context: Context) {
     val preferences = getZeaPrefs(context)
-
-    return preferences
+    val hadEncryptedCopy = preferences
         .readStringSafely(ZeaStorageContract.USER_PIN_ENCRYPTED)
-        .isNotBlank() &&
+        .isNotBlank() ||
             preferences
                 .readStringSafely(ZeaStorageContract.USER_PIN_IV)
                 .isNotBlank()
-}
 
-fun revealSavedUserPin(context: Context): String {
-    val preferences = getZeaPrefs(context)
-    val encryptedPin = preferences.readStringSafely(
-        ZeaStorageContract.USER_PIN_ENCRYPTED
-    )
-    val iv = preferences.readStringSafely(
-        ZeaStorageContract.USER_PIN_IV
-    )
-
-    if (encryptedPin.isBlank() || iv.isBlank()) {
-        return ""
+    if (!hadEncryptedCopy) {
+        return
     }
 
-    return try {
-        decryptUserPin(encryptedPin, iv)
-    } catch (_: Exception) {
-        ""
-    }
+    preferences.edit()
+        .remove(ZeaStorageContract.USER_PIN_ENCRYPTED)
+        .remove(ZeaStorageContract.USER_PIN_IV)
+        .apply()
+    deleteUserPinSecretKey()
 }
 
 fun saveLastCommand(context: Context, command: String) {

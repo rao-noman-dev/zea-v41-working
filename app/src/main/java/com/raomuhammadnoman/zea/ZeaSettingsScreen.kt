@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -108,6 +109,7 @@ fun ZeaSettingsScreen(onBack: () -> Unit) {
 
     var searchQuery by remember { mutableStateOf("") }
     var showSecurityDetail by remember { mutableStateOf(false) }
+    var showDiagnostics by remember { mutableStateOf(false) }
 
     var pendingAction by remember { mutableStateOf(ZeaSecurityPendingAction.NONE) }
     var pinFlowError by remember { mutableStateOf("") }
@@ -152,12 +154,15 @@ fun ZeaSettingsScreen(onBack: () -> Unit) {
     // gates fingerprint enable / security disable).
     when (pinFlow) {
         ZeaSettingsPinFlow.CURRENT_PIN -> {
+            var pinAttemptVersion by remember { mutableStateOf(0) }
+            val lockout = rememberZeaPinLockout(context, pinAttemptVersion)
+            val effectivePinFlowError = if (lockout.lockedOut) lockout.message else pinFlowError
             ZeaPinEntryScreen(
                 title = "Enter your current Zyro PIN",
                 subtitle = "Verify your identity to continue.",
                 buttonLabel = "Continue",
                 showBackButton = true,
-                errorText = pinFlowError,
+                errorText = effectivePinFlowError,
                 currentPage = null,
                 totalPages = 1,
                 onBack = {
@@ -166,7 +171,10 @@ fun ZeaSettingsScreen(onBack: () -> Unit) {
                     pinFlowError = ""
                 },
                 onSubmit = { enteredPin ->
-                    if (verifyAdminPin(context, enteredPin)) {
+                    if (lockout.lockedOut) {
+                        pinFlowError = lockout.message
+                    } else if (verifyAdminPin(context, enteredPin)) {
+                        ZeaPinLockout.recordSuccess(context)
                         pinFlowError = ""
                         when (pendingAction) {
                             ZeaSecurityPendingAction.ENABLE_FINGERPRINT -> {
@@ -196,9 +204,16 @@ fun ZeaSettingsScreen(onBack: () -> Unit) {
                             }
                         }
                     } else {
-                        pinFlowError = "Incorrect PIN. Please try again."
+                        ZeaPinLockout.recordFailure(context)
+                        pinAttemptVersion++
+                        pinFlowError = if (ZeaPinLockout.isLockedOut(context)) {
+                            ZeaPinLockout.cooldownMessage(context)
+                        } else {
+                            "Incorrect PIN. Please try again."
+                        }
                     }
-                }
+                },
+                submitEnabled = !lockout.lockedOut
             )
             return
         }
@@ -309,6 +324,11 @@ fun ZeaSettingsScreen(onBack: () -> Unit) {
         ZeaSettingsPinFlow.NONE -> Unit
     }
 
+    if (showDiagnostics) {
+        ZeaDiagnosticsScreen(onBack = { showDiagnostics = false })
+        return
+    }
+
     val query = searchQuery.trim()
     val matchesSecurityCategory = query.isEmpty() ||
             "security & privacy".contains(query, ignoreCase = true) ||
@@ -322,7 +342,16 @@ fun ZeaSettingsScreen(onBack: () -> Unit) {
         "change pin",
         "pin",
         "fingerprint",
-        "disable security"
+        "disable security",
+        "auto-lock"
+    ).any { it.contains(query, ignoreCase = true) }
+    val matchesDiagnosticsCard = query.isEmpty() || listOf(
+        "diagnostics & recovery",
+        "diagnostics",
+        "recovery",
+        "system check",
+        "emergency",
+        "health"
     ).any { it.contains(query, ignoreCase = true) }
 
     Surface(
@@ -496,7 +525,64 @@ fun ZeaSettingsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                if (!matchesSecurityCategory || !matchesAppSecurityCard) {
+                if (matchesDiagnosticsCard) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .clickable { showDiagnostics = true },
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                modifier = Modifier.size(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Diagnostics,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Diagnostics & Recovery",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+
+                                Spacer(modifier = Modifier.height(2.dp))
+
+                                Text(
+                                    text = "System Check, protection health, emergency recovery",
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+                                )
+                            }
+
+                            Icon(
+                                imageVector = Icons.Filled.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                            )
+                        }
+                    }
+                }
+
+                if (!matchesSecurityCategory || (!matchesAppSecurityCard && !matchesDiagnosticsCard)) {
                     Spacer(modifier = Modifier.height(26.dp))
                     Text(
                         text = "No settings found for \"$query\"",
@@ -595,6 +681,73 @@ private fun ZeaAppSecurityUnlockSection(
         subtitle = "Replace your current Zyro PIN with a new one",
         onClick = onChangePinClick
     )
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    var showAutoLockDialog by remember { mutableStateOf(false) }
+    ZeaSettingsRowCard(
+        icon = ZeaIcons.Timer,
+        title = "Auto-Lock",
+        subtitle = "Locks ${ZeaAutoLock.option.label.lowercase()} — tap to change when Zyro asks for your PIN again",
+        onClick = { showAutoLockDialog = true }
+    )
+
+    if (showAutoLockDialog) {
+        AlertDialog(
+            onDismissRequest = { showAutoLockDialog = false },
+            title = { Text(text = "Auto-Lock") },
+            text = {
+                Column {
+                    Text(
+                        text = "Choose when Zyro locks itself and asks for your PIN again.",
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    ZeaAutoLockOption.entries.forEach { autoLockOption ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    ZeaAutoLock.setOption(context, autoLockOption)
+                                    showAutoLockDialog = false
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = ZeaAutoLock.option == autoLockOption,
+                                onClick = {
+                                    ZeaAutoLock.setOption(context, autoLockOption)
+                                    showAutoLockDialog = false
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = autoLockOption.label,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = autoLockOption.description,
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAutoLockDialog = false }) {
+                    Text(text = "Close")
+                }
+            }
+        )
+    }
 
     Spacer(modifier = Modifier.height(10.dp))
 
