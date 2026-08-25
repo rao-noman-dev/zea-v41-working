@@ -1,0 +1,10 @@
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 
+          type=RTC_WAKEUP tag=*walarm*:com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED 

@@ -1,0 +1,412 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Contacts are read only after the user grants runtime permission. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        Device Owner stack (restored by explicit owner decision):
+        usage stats feed the DO private-session monitor; the foreground-service
+        pair backs the special-use monitor service that only runs while the
+        app holds the Device Owner role.
+    -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!--
+        After a hide/unhide toggle some OEM launchers (vivo FunTouch) keep a stale
+        ghost row with a dummy icon until their process restarts. Killing the cached
+        home launcher forces it to rebuild its app model on next start.
+    -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+
+    <!--
+        Package visibility is limited to Zea's launcher use cases.
+        QUERY_ALL_PACKAGES and ACCESS_HIDDEN_PROFILES are intentionally excluded.
+        Static package declarations support approved apps on Android versions where
+        package queries are filtered. Dynamic apps are discovered through launcher
+        intent visibility and are stored only after local verification.
+    -->
+    <queries>
+
+        <!-- Dynamic discovery of launchable applications. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.INFO" />
+        </intent>
+
+        <!-- System action handlers used by ZeaAppLauncher. -->
+        <intent>
+            <action android:name="android.media.action.STILL_IMAGE_CAMERA" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.SHOW_ALARMS" />
+        </intent>
+
+        <intent>
+            <action android:name="android.provider.MediaStore.RECORD_SOUND" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.CREATE_NOTE" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_MESSAGING" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_CONTACTS" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_GALLERY" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_CALENDAR" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_CALCULATOR" />
+        </intent>
+
+        <!-- Approved package-backed application catalog. -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.spotify.music" />
+        <package android:name="com.instagram.android" />
+        <package android:name="com.zhiliaoapp.musically" />
+        <package android:name="com.linkedin.android" />
+        <package android:name="com.intsig.camscanner" />
+        <package android:name="com.yandex.yango" />
+        <package android:name="com.google.android.gm" />
+        <package android:name="com.google.android.apps.docs" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.google.android.apps.nbu.files" />
+        <package android:name="com.android.vending" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="org.thoughtcrime.securesms" />
+        <package android:name="com.discord" />
+        <package android:name="com.facebook.orca" />
+        <package android:name="com.viber.voip" />
+        <package android:name="com.imo.android.imoim" />
+        <package android:name="com.skype.raider" />
+        <package android:name="us.zoom.videomeetings" />
+        <package android:name="com.google.android.apps.tachyon" />
+        <package android:name="com.microsoft.teams" />
+        <package android:name="com.Slack" />
+        <package android:name="jp.naver.line.android" />
+        <package android:name="com.tencent.mm" />
+        <package android:name="com.facebook.katana" />
+        <package android:name="com.twitter.android" />
+        <package android:name="com.instagram.barcelona" />
+        <package android:name="com.reddit.frontpage" />
+        <package android:name="com.pinterest" />
+        <package android:name="com.snapchat.android" />
+        <package android:name="com.quora.android" />
+        <package android:name="com.tumblr" />
+        <package android:name="com.bereal.ft" />
+        <package android:name="xyz.blueskyweb.app" />
+        <package android:name="org.joinmastodon.android" />
+        <package android:name="com.bd.nproject" />
+        <package android:name="com.microsoft.office.outlook" />
+        <package android:name="com.microsoft.skydrive" />
+        <package android:name="com.dropbox.android" />
+        <package android:name="com.google.android.apps.docs.editors.docs" />
+        <package android:name="com.google.android.apps.docs.editors.sheets" />
+        <package android:name="com.google.android.apps.docs.editors.slides" />
+        <package android:name="com.microsoft.office.word" />
+        <package android:name="com.microsoft.office.excel" />
+        <package android:name="com.microsoft.office.powerpoint" />
+        <package android:name="com.microsoft.office.onenote" />
+        <package android:name="notion.id" />
+        <package android:name="com.evernote" />
+        <package android:name="com.todoist" />
+        <package android:name="com.trello" />
+        <package android:name="com.asana.app" />
+        <package android:name="co.mangotechnologies.clickup" />
+        <package android:name="com.google.android.keep" />
+        <package android:name="com.adobe.reader" />
+        <package android:name="com.microsoft.office.officelens" />
+        <package android:name="cn.wps.moffice_eng" />
+        <package android:name="com.canva.editor" />
+        <package android:name="com.adobe.scan.android" />
+        <package android:name="org.coursera.android" />
+        <package android:name="org.khanacademy.android" />
+        <package android:name="com.duolingo" />
+        <package android:name="com.udemy.android" />
+        <package android:name="org.edx.mobile" />
+        <package android:name="com.quizlet.quizletandroid" />
+        <package android:name="com.microblink.photomath" />
+        <package android:name="com.google.android.apps.classroom" />
+        <package android:name="com.moodle.moodlemobile" />
+        <package android:name="org.brilliant.android" />
+        <package android:name="com.sololearn" />
+        <package android:name="com.getmimo" />
+        <package android:name="com.ted.android" />
+        <package android:name="com.memrise.android.memrisecompanion" />
+        <package android:name="com.busuu.android.enc" />
+        <package android:name="com.waze" />
+        <package android:name="com.ubercab" />
+        <package android:name="com.careem.acma" />
+        <package android:name="sinet.startup.inDriver" />
+        <package android:name="ee.mtakso.client" />
+        <package android:name="com.booking" />
+        <package android:name="com.airbnb.android" />
+        <package android:name="com.agoda.mobile.consumer" />
+        <package android:name="ctrip.english" />
+        <package android:name="net.skyscanner.android.main" />
+        <package android:name="com.tripadvisor.tripadvisor" />
+        <package android:name="com.google.earth" />
+        <package android:name="com.tranzmate" />
+        <package android:name="com.rome2rio.www.rome2rio" />
+        <package android:name="com.amazon.mShop.android.shopping" />
+        <package android:name="com.alibaba.aliexpresshd" />
+        <package android:name="com.ebay.mobile" />
+        <package android:name="com.daraz.android" />
+        <package android:name="com.einnovation.temu" />
+        <package android:name="com.zzkko" />
+        <package android:name="com.olx.pk" />
+        <package android:name="com.global.foodpanda.android" />
+        <package android:name="com.ubercab.eats" />
+        <package android:name="com.talabat" />
+        <package android:name="com.deliveroo.orderapp" />
+        <package android:name="com.instacart.client" />
+        <package android:name="com.google.android.apps.fitness" />
+        <package android:name="com.sec.android.app.shealth" />
+        <package android:name="com.fitbit.FitbitMobile" />
+        <package android:name="com.strava" />
+        <package android:name="com.myfitnesspal.android" />
+        <package android:name="com.nike.plusgps" />
+        <package android:name="com.runtastic.android" />
+        <package android:name="com.google.android.apps.healthdata" />
+        <package android:name="com.getsomeheadspace.android" />
+        <package android:name="com.calm.android" />
+        <package android:name="com.northcube.sleepcycle" />
+        <package android:name="org.iggymedia.periodtracker" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.google.android.apps.youtube.music" />
+        <package android:name="com.netflix.mediaclient" />
+        <package android:name="com.amazon.avod.thirdpartyclient" />
+        <package android:name="com.disney.disneyplus" />
+        <package android:name="org.videolan.vlc" />
+        <package android:name="com.shazam.android" />
+        <package android:name="com.soundcloud.android" />
+        <package android:name="tv.twitch.android.app" />
+        <package android:name="org.mozilla.firefox" />
+        <package android:name="com.microsoft.emmx" />
+        <package android:name="com.brave.browser" />
+        <package android:name="com.opera.browser" />
+        <package android:name="com.google.android.apps.translate" />
+
+        <!-- Device and vendor package fallbacks used by system launch plans. -->
+        <package android:name="com.android.alarmclock" />
+        <package android:name="com.android.bbkcalculator" />
+        <package android:name="com.android.calculator2" />
+        <package android:name="com.android.calendar" />
+        <package android:name="com.android.camera" />
+        <package android:name="com.android.camera2" />
+        <package android:name="com.android.contacts" />
+        <package android:name="com.android.deskclock" />
+        <package android:name="com.android.dialer" />
+        <package android:name="com.android.gallery3d" />
+        <package android:name="com.android.messaging" />
+        <package android:name="com.android.mms" />
+        <package android:name="com.android.settings" />
+        <package android:name="com.android.soundrecorder" />
+        <package android:name="com.coloros.note" />
+        <package android:name="com.google.android.apps.messaging" />
+        <package android:name="com.google.android.apps.photos" />
+        <package android:name="com.google.android.apps.recorder" />
+        <package android:name="com.google.android.calculator" />
+        <package android:name="com.google.android.calendar" />
+        <package android:name="com.google.android.contacts" />
+        <package android:name="com.google.android.deskclock" />
+        <package android:name="com.google.android.dialer" />
+        <package android:name="com.google.android.GoogleCamera" />
+        <package android:name="com.miui.notes" />
+        <package android:name="com.samsung.android.app.notes" />
+        <package android:name="com.vivo.alarmclock" />
+        <package android:name="com.vivo.calculator" />
+        <package android:name="com.vivo.calendar" />
+        <package android:name="com.vivo.camera" />
+        <package android:name="com.vivo.contacts" />
+        <package android:name="com.vivo.gallery" />
+        <package android:name="com.vivo.mms" />
+        <package android:name="com.vivo.notes" />
+        <package android:name="com.vivo.soundrecorder" />
+
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ZeaAssistant"
+        android:usesCleartextTraffic="false">
+
+        <!--
+            Device Owner admin component. The platform binds this receiver
+            with BIND_DEVICE_ADMIN; it is the anchor for every
+            DevicePolicyManager operation (hidden-at-rest state, per-app and
+            user-wide install/uninstall locks, owner keep-alive binding).
+        -->
+        <receiver
+            android:name=".ZeaDeviceAdminReceiver"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+                <action android:name="android.app.action.DEVICE_OWNER_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Android 12+ provisioning mode bridge (fully-managed device only). -->
+        <activity
+            android:name=".ZeaProvisioningModeActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Post-provisioning policy compliance checkpoint. -->
+        <activity
+            android:name=".ZeaAdminPolicyComplianceActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Provisioning success landing (QR / ADB provisioning flows). -->
+        <activity
+            android:name=".ZeaProvisioningSuccessActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.app.action.PROVISIONING_SUCCESSFUL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            Bound by the system while the app is Device Owner. The live owner
+            process registers package lifecycle broadcasts at runtime and
+            reconciles protected state after reboots or package changes.
+        -->
+        <service
+            android:name=".ZeaDeviceOwnerKeepAliveService"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN_SERVICE">
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_SERVICE" />
+            </intent-filter>
+        </service>
+
+
+        <receiver
+            android:name=".ZeaDeviceOwnerSafetyReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="com.raomuhammadnoman.zea.action.TIMED_HIDE_EXPIRED" />
+            </intent-filter>
+
+        </receiver>
+
+        <!--
+            App Lock mode enforcement (non-Device-Owner devices). Watches only
+            window-change package names to bounce users out of protected apps;
+            it never reads screen content.
+        -->
+        <service
+            android:name=".ZeaStealthLockService"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/zea_stealth_lock_config" />
+        </service>
+
+        <!--
+            Private-session safety monitor (Device Owner stack). Runs as a
+            special-use foreground service ONLY while one protected app is
+            temporarily unhidden for an active private session; it watches
+            screen lock / app exit / safety broadcasts and performs the
+            fail-closed re-hide transaction when the session must end.
+        -->
+        <service
+            android:name=".ZeaPrivateSessionMonitorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="device_owner_private_session_monitor" />
+        </service>
+
+        <activity
+            android:name=".MainActivity"
+            android:documentLaunchMode="never"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.raomuhammadnoman.zea.assistant">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+    </application>
+</manifest>

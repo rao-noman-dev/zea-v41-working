@@ -1,0 +1,34 @@
+﻿
+    <string name="batch_journal_active_json_v1"></string>
+    <string name="private_apps_json_v1">{&quot;schemaVersion&quot;:1,&quot;apps
+&quot;:[{&quot;displayName&quot;:&quot;8 Ball Pool&quot;,&quot;packageName&quot
+;:&quot;com.miniclip.eightballpool&quot;,&quot;launcherActivityName&quot;:&quot
+;com.miniclip.eightballpool.EightBallPoolActivity&quot;,&quot;aliases&quot;:[]}
+,{&quot;displayName&quot;:&quot;9GAG&quot;,&quot;packageName&quot;:&quot;com.ni
+negag.android.app&quot;,&quot;launcherActivityName&quot;:&quot;com.ninegag.andr
+oid.app.ui.home.HomeActivity&quot;,&quot;aliases&quot;:[]},{&quot;displayName&q
+uot;:&quot;Adobe Scan&quot;,&quot;packageName&quot;:&quot;com.adobe.scan.androi
+d&quot;,&quot;launcherActivityName&quot;:&quot;com.adobe.scan.android.SplashAct
+ivity&quot;,&quot;aliases&quot;:[]},{&quot;displayName&quot;:&quot;Agoda&quot;,
+&quot;packageName&quot;:&quot;com.agoda.mobile.consumer&quot;,&quot;launcherAct
+ivityName&quot;:&quot;com.agoda.mobile.consumer.screens.splash.AppLauncherActiv
+ity&quot;,&quot;aliases&quot;:[]},{&quot;displayName&quot;:&quot;Airbnb&quot;,&
+quot;packageName&quot;:&quot;com.airbnb.android&quot;,&quot;launcherActivityNam
+e&quot;:&quot;com.airbnb.android.feat.splashscreen.SplashScreenActivity&quot;,&
+quot;aliases&quot;:[]},{&quot;displayName&quot;:&quot;AliExpress&quot;,&quot;pa
+ckageName&quot;:&quot;com.alibaba.aliexpresshd&quot;,&quot;launcherActivityName
+&quot;:&quot;com.aliexpress.app.FirstActivity&quot;,&quot;aliases&quot;:[]},{&q
+uot;displayName&quot;:&quot;Booking.com&quot;,&quot;packageName&quot;:&quot;com
+.booking&quot;,&quot;launcherActivityName&quot;:&quot;com.booking.startup.HomeA
+ctivity&quot;,&quot;aliases&quot;:[]},{&quot;displayName&quot;:&quot;Cricket Le
+ague&quot;,&quot;packageName&quot;:&quot;com.miniclip.cricketleague&quot;,&quot
+;launcherActivityName&quot;:&quot;com.miniclip.cricketleague.CricketActivity&qu
+ot;,&quot;aliases&quot;:[]},{&quot;displayName&quot;:&quot;Daraz&quot;,&quot;pa
+ckageName&quot;:&quot;com.daraz.android&quot;,&quot;launcherActivityName&quot;:
+&quot;com.lazada.activities.EnterActivity&quot;,&quot;aliases&quot;:[]},{&quot;
+displayName&quot;:&quot;Expedia&quot;,&quot;packageName&quot;:&quot;com.expedia
+.bookings&quot;,&quot;launcherActivityName&quot;:&quot;com.expedia.bookings.act
+ivity.SearchActivity&quot;,&quot;aliases&quot;:[]}]}</string>
+    <string name="timed_hides_json_v1">[]</string>
+
+

@@ -1,0 +1,28 @@
+﻿
+08-25 02:36:14.523 27953 27953 E appproc : checkAndSetEnv get_baksize open 
+file /data/dalvik-cache/classpath failed , error(Permission denied)
+08-25 02:36:14.523 27953 27953 E appproc : checkAndSetEnv write_classpathbak 
+open file failed:Permission denied
+08-25 02:36:14.523 27953 27953 E appproc : checkAndSetEnv get_baksize open 
+file /data/dalvik-cache/classpath2 failed , error(Permission denied)
+08-25 02:36:14.523 27953 27953 E appproc : checkAndSetEnv write_classpathbak 
+open file failed:Permission denied
+08-25 02:36:14.523 27953 27953 E appproc : checkAndSetEnv get_baksize open 
+file /data/dalvik-cache/classpath3 failed , error(Permission denied)
+08-25 02:36:14.523 27953 27953 E appproc : checkAndSetEnv write_classpathbak 
+open file failed:Permission denied
+08-25 02:36:14.523 27953 27953 E appproc : checkAndSetEnv get_baksize open 
+file /data/dalvik-cache/classpath4 failed , error(Permission denied)
+08-25 02:36:14.523 27953 27953 E appproc : checkAndSetEnv write_classpathbak 
+open file failed:Permission denied
+08-25 02:36:14.548  4504 27806 I Blockstore: (REDACTED) 
+[PackageIntentOperation] Deleted restore credential for package %s is 
+successful: %s
+08-25 02:36:15.007  4504 27895 W FA-SVC  : Failed to get uid, app: 
+com.ninegag.android.app
+08-25 02:36:15.296 22054 23595 I BLASTBufferQueue: QoSAllocBuff Successful. 
+Ret 0 
+08-25 02:36:15.465  4504 27895 W FA-SVC  : Failed to get uid, app: 
+com.accuweather.android
+
+

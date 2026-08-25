@@ -1,0 +1,35 @@
+﻿
+08-25 02:23:30.997  3919  5142 D SQLiteQueryBuilder: INSERT INTO files (_user_i
+d,inferred_date,format,bucket_display_name,owner_package_name,parent,volume_nam
+e,date_expires,_modifier,_display_name,mime_type,_data,title,is_trashed,is_pend
+ing,date_added,bucket_id,media_type,relative_path,generation_added,generation_m
+odified,_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT generation 
+FROM local_metadata),(SELECT generation FROM local_metadata),_GET_ID( 
+'/storage/emulated/0/zea_hide_confirm.xml' ))
+08-25 02:23:39.713 22054 22054 I ImeTracker: 
+com.raomuhammadnoman.zea:bae3d06e: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+08-25 02:23:41.802  3919  5150 D SQLiteQueryBuilder: INSERT INTO files (_user_i
+d,inferred_date,format,bucket_display_name,owner_package_name,parent,volume_nam
+e,date_expires,_modifier,_display_name,mime_type,_data,title,is_trashed,is_pend
+ing,date_added,bucket_id,media_type,relative_path,generation_added,generation_m
+odified,_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT generation 
+FROM local_metadata),(SELECT generation FROM local_metadata),_GET_ID( 
+'/storage/emulated/0/zea_hide_confirm2.xml' ))
+08-25 02:23:48.210 22054 22054 I ImeTracker: 
+com.raomuhammadnoman.zea:7ffb9d61: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+08-25 02:23:52.264  3919 14271 D SQLiteQueryBuilder: INSERT INTO files (_user_i
+d,inferred_date,format,bucket_display_name,owner_package_name,parent,volume_nam
+e,date_expires,_modifier,_display_name,mime_type,_data,title,is_trashed,is_pend
+ing,date_added,bucket_id,media_type,relative_path,generation_added,generation_m
+odified,_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT generation 
+FROM local_metadata),(SELECT generation FROM local_metadata),_GET_ID( 
+'/storage/emulated/0/zea_hide_result.xml' ))
+08-25 02:25:05.680  3919  5142 D SQLiteQueryBuilder: INSERT INTO files (_user_i
+d,inferred_date,format,bucket_display_name,owner_package_name,parent,volume_nam
+e,date_expires,_modifier,_display_name,mime_type,_data,title,is_trashed,is_pend
+ing,date_added,bucket_id,media_type,relative_path,generation_added,generation_m
+odified,_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT generation 
+FROM local_metadata),(SELECT generation FROM local_metadata),_GET_ID( 
+'/storage/emulated/0/zea_hide_done.xml' ))
+
+

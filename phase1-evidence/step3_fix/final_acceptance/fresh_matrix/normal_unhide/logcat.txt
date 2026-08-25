@@ -1,0 +1,10 @@
+﻿
+08-25 02:40:02.225  3919  5105 D SQLiteQueryBuilder: INSERT INTO files (_user_i
+d,inferred_date,format,bucket_display_name,owner_package_name,parent,volume_nam
+e,date_expires,_modifier,_display_name,mime_type,_data,title,is_trashed,is_pend
+ing,date_added,bucket_id,media_type,relative_path,generation_added,generation_m
+odified,_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT generation 
+FROM local_metadata),(SELECT generation FROM local_metadata),_GET_ID( 
+'/storage/emulated/0/zea_unhide_done.xml' ))
+
+

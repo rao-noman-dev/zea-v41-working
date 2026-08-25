@@ -1,0 +1,44 @@
+[
+    {
+        "id":  "CHK03",
+        "name":  "Security persistence (restart keeps lock)",
+        "status":  "RED",
+        "evidence":  "no gate after restart",
+        "at":  "09:01:51"
+    },
+    {
+        "id":  "CHK01",
+        "name":  "PIN unlock regression",
+        "status":  "RED",
+        "evidence":  "security gate NOT shown on launch - security regression?",
+        "at":  "09:02:08"
+    },
+    {
+        "id":  "CHK02",
+        "name":  "Fingerprint option present",
+        "status":  "NOT VERIFIED",
+        "evidence":  "gate not shown this run",
+        "at":  "09:02:16"
+    },
+    {
+        "id":  "CHK11",
+        "name":  "App restart preserves lock+state",
+        "status":  "RED",
+        "evidence":  "relocked=False | same=True",
+        "at":  "09:02:49"
+    },
+    {
+        "id":  "CHK08a",
+        "name":  "PTR smoke: hub gesture",
+        "status":  "GREEN",
+        "evidence":  "counts stable all= | no crash",
+        "at":  "09:03:13"
+    },
+    {
+        "id":  "CHK09",
+        "name":  "Count coherence snapshot",
+        "status":  "RED",
+        "evidence":  "hub not reachable",
+        "at":  "09:03:30"
+    }
+]

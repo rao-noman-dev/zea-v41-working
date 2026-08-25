@@ -1,0 +1,63 @@
+﻿
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.google.android.contacts}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.google.android.gm}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.avast.android.mobilesecurity}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.adobe.lrmobile}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.wego.android}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.vivo.Tips}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.ace.ex.file.manager}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.valvesoftware.android.steam.community}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.microsoft.office.word}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.google.android.apps.bard}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.google.android.apps.chromecast.app}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.careem.acma}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.UCMobile.intl}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.cnn.mobile.android.phone}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.alibaba.aliexpresshd}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.microsoft.office.powerpoint}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+deezer.android.app}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.google.android.apps.maps}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.devhd.feedly}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.roamless.roamless}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.asana.app}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.scribd.app.reader0.docs}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.google.android.apps.safetyhub}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.google.android.apps.walletnfcrel}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.lemon.lvoverseas}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.android.vending}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.antivirus}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.duolingo}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.google.android.apps.youtube.music}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.vimeo.android.videoapp}
+
+

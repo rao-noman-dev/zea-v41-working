@@ -1,0 +1,7 @@
+{
+    "id":  "CHK09",
+    "name":  "Count coherence snapshot",
+    "status":  "RED",
+    "evidence":  "hub: all=194 hidden=10 timed=0 | platform hidden=true count=0",
+    "at":  "03:31:07"
+}

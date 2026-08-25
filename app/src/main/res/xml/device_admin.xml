@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Minimal device-admin policy set for Zyro's Device Owner role.
+    The owner powers used by Zyro (hide/uninstall-block/install-lock
+    reconciliation) flow through DevicePolicyManager APIs that require only
+    an active admin component; these declared policies cover the core
+    enforcement surface without requesting unrelated capabilities.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <force-lock />
+        <reset-password />
+        <wipe-data />
+        <disable-camera />
+        <disable-keyguard-features />
+    </uses-policies>
+</device-admin>

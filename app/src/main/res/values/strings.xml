@@ -1,0 +1,7 @@
+<resources>
+    <!-- TEMPORARY BRAND NAME: "Zyro" is not the permanent app name and can be replaced with the original/permanent name "Zea Assistant" at any time. -->
+    <string name="app_name">Zyro</string>
+    <string name="device_admin_description">Controls hidden-at-rest state for user-selected third-party private apps on a dedicated fully managed test device.</string>
+    <!-- TEMPORARY BRAND NAME: "Zyro" is not the permanent app name and can be replaced with the original/permanent name "Zea Assistant" at any time. -->
+    <string name="stealth_lock_service_description">Lets Zyro lock apps you protect. When a locked app is opened outside Zyro, it returns you to the home screen instantly. Zyro never reads your screen content.</string>
+</resources>

@@ -1,0 +1,26 @@
+﻿
+            BooleanPolicyValue { mValue= false }
+        
+>       PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.daraz.android}
+          Per-admin Policy:
+            EnforcingAdmin { mPackageName= com.raomuhammadnoman.zea, 
+mComponentName= ComponentInfo{com.raomuhammadnoman.zea/com.raomuhammadnoman.zea
+.ZeaDeviceAdminReceiver}, mAuthorities= [enterprise], mUserId= 0, 
+mIsRoleAuthority= false, mIsSystemAuthority= false, mSystemEntity = null }
+            BooleanPolicyValue { mValue= false }
+        
+>       PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.daraz.android}
+          Per-admin Policy:
+            EnforcingAdmin { mPackageName= com.raomuhammadnoman.zea, 
+mComponentName= ComponentInfo{com.raomuhammadnoman.zea/com.raomuhammadnoman.zea
+.ZeaDeviceAdminReceiver}, mAuthorities= [enterprise], mUserId= 0, 
+mIsRoleAuthority= false, mIsSystemAuthority= false, mSystemEntity = null }
+      80: com.microsoft.bing
+      81: org.thoughtcrime.securesms
+>     82: com.daraz.android
+      83: com.roamless.roamless
+      84: com.vivo.imanager
+
+

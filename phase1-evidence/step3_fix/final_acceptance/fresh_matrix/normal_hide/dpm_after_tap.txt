@@ -1,0 +1,18 @@
+﻿
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.ninegag.android.app}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.miniclip.eightballpool}
+      PackagePolicyKey{mPolicyKey= applicationHidden; mPackageName= 
+com.accuweather.android}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.accuweather.android}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.ninegag.android.app}
+      PackagePolicyKey{mPolicyKey= packageUninstallBlocked; mPackageName= 
+com.miniclip.eightballpool}
+    25: com.miniclip.eightballpool
+    89: com.ninegag.android.app
+    170: com.accuweather.android
+
+
