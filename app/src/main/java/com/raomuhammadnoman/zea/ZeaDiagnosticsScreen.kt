@@ -40,6 +40,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.launch
 
@@ -237,13 +240,7 @@ fun ZeaDiagnosticsScreen(onBack: () -> Unit) {
             } else {
                 ZeaRecoveryActionList(
                     runningAction = runningRecoveryAction,
-                    onActionClick = { action ->
-                        if (action.destructive) {
-                            confirmAction = action
-                        } else {
-                            runRecovery(action)
-                        }
-                    }
+                    onActionClick = { action -> confirmAction = action }
                 )
             }
         }
@@ -254,8 +251,13 @@ fun ZeaDiagnosticsScreen(onBack: () -> Unit) {
             onDismissRequest = { confirmAction = null },
             title = { Text(text = action.title) },
             text = {
+                val explanation = if (action.destructive) {
+                    "${action.description}\n\nThis is a destructive recovery action. Continue?"
+                } else {
+                    "${action.description}\n\nConfirm to run this recovery action."
+                }
                 Text(
-                    text = "${action.description}\n\nThis is a destructive recovery action. Continue?",
+                    text = explanation,
                     fontSize = 13.sp,
                     lineHeight = 18.sp
                 )
@@ -267,7 +269,11 @@ fun ZeaDiagnosticsScreen(onBack: () -> Unit) {
                 }) {
                     Text(
                         text = "Continue",
-                        color = MaterialTheme.colorScheme.error,
+                        color = if (action.destructive) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -574,6 +580,8 @@ private fun ZeaRecoveryActionList(
  * Shows live protected/timed counts, a healthy/warning headline, the first
  * detected issue, and a Fix Now shortcut that opens the matching system
  * settings page (or the full diagnostics screen when no direct fix exists).
+ * Re-evaluates on every lifecycle resume, so revoking a permission in
+ * Settings and coming back flips the card without a restart.
  */
 @Composable
 fun ZeaProtectionHealthCard(
@@ -581,10 +589,24 @@ fun ZeaProtectionHealthCard(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
     var report by remember { mutableStateOf<ZeaProtectionHealthReport?>(null) }
 
-    LaunchedEffect(Unit) {
-        report = ZeaProtectionHealth.evaluate(context)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scope.launch {
+                    report = ZeaProtectionHealth.evaluate(context)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        scope.launch {
+            report = ZeaProtectionHealth.evaluate(context)
+        }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     val current = report ?: return

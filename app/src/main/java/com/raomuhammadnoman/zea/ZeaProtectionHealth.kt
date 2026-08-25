@@ -1,7 +1,6 @@
 package com.raomuhammadnoman.zea
 
 import android.app.AlarmManager
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -420,12 +419,5 @@ object ZeaProtectionHealth {
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return intent
-    }
-
-    /** Notification Manager backed check kept for diagnostics reuse. */
-    internal fun areNotificationsEnabled(context: Context): Boolean {
-        val manager = context.getSystemService(NotificationManager::class.java)
-            ?: return false
-        return manager.areNotificationsEnabled()
     }
 }
