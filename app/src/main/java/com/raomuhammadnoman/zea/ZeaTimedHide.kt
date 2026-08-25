@@ -36,6 +36,13 @@ object ZeaTimedHide {
             if (!outcome.success) {
                 failedRecords.add(record)
             }
+            ZeaActivityLog.record(
+                appContext,
+                ZeaActivityEventType.TIMER_EXPIRY,
+                record.displayName,
+                outcome.message.take(200),
+                if (outcome.success) ZeaActivityResult.SUCCESS else ZeaActivityResult.FAILURE
+            )
             Log.i(
                 ZEA_DEVICE_OWNER_LOG_TAG,
                 "timed hide expiry for ${record.packageName}: ${outcome.message}"

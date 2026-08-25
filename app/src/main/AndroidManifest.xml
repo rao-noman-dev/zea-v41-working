@@ -360,6 +360,20 @@
 
         </receiver>
 
+        <receiver
+            android:name=".ZeaScheduleReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.raomuhammadnoman.zea.action.SCHEDULE_FIRED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+
+        </receiver>
+
         <!--
             App Lock mode enforcement (non-Device-Owner devices). Watches only
             window-change package names to bounce users out of protected apps;

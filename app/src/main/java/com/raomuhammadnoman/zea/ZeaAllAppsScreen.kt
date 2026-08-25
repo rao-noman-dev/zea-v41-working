@@ -59,7 +59,23 @@ import kotlinx.coroutines.withContext
 
 enum class ZeaAppsSort {
     NAME,
-    STATUS
+    STATUS,
+    RECENTLY_INSTALLED,
+    RECENTLY_HIDDEN,
+    RECENTLY_UNHIDDEN
+}
+
+enum class ZeaAppsFilter {
+    ALL,
+    VISIBLE,
+    HIDDEN,
+    TIMED,
+    SYSTEM_APPS,
+    USER_APPS,
+    PROTECTED,
+    UNPROTECTED,
+    RECENTLY_INSTALLED,
+    RECENTLY_MANAGED
 }
 
 /**
@@ -80,6 +96,9 @@ fun ZeaAllAppsScreen(
     var apps by remember { mutableStateOf<List<ZeaManagedApp>?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(ZeaAppsSort.NAME) }
+    var filter by rememberSaveable { mutableStateOf(ZeaAppsFilter.ALL) }
+    var recentlyManaged by remember { mutableStateOf<List<ZeaRecentlyManagedEntry>>(emptyList()) }
+    var favoritePackages by remember { mutableStateOf<Set<String>>(emptySet()) }
     var menuExpanded by remember { mutableStateOf(false) }
     var reloadToken by remember { mutableStateOf(0) }
     val searchFocus = remember { FocusRequester() }
@@ -103,6 +122,8 @@ fun ZeaAllAppsScreen(
     var isRefreshingList by remember { mutableStateOf(false) }
 
     LaunchedEffect(reloadToken) {
+        recentlyManaged = ZeaRecentlyManaged.load(context)
+        favoritePackages = ZeaFavorites.load(context).toSet()
         try {
             // Every reload runs the same Phase-1 reconciliation pipeline, so
             // post-mutation and pull-to-refresh renders cannot use stale state.
@@ -138,11 +159,13 @@ fun ZeaAllAppsScreen(
     }
 
     val loadedApps = apps
-    val shownApps = remember(loadedApps, query, sort) {
+    val shownApps = remember(loadedApps, query, sort, filter, recentlyManaged) {
         filterAndSortApps(
             apps = loadedApps.orEmpty(),
             query = query,
-            sort = sort
+            sort = sort,
+            filter = filter,
+            recentlyManaged = recentlyManaged
         )
     }
 
@@ -266,6 +289,143 @@ fun ZeaAllAppsScreen(
                             }
                         )
 
+                        // Phase 3: Filter options
+                        DropdownMenuItem(
+                            text = { Text("Filter: All Apps") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.ALL) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.ALL
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filter: Visible Only") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.VISIBLE) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.VISIBLE
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filter: Hidden Only") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.HIDDEN) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.HIDDEN
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filter: Timed Only") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.TIMED) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.TIMED
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filter: System Apps") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.SYSTEM_APPS) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.SYSTEM_APPS
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filter: User Apps") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.USER_APPS) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.USER_APPS
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filter: Protected") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.PROTECTED) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.PROTECTED
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filter: Unprotected") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.UNPROTECTED) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.UNPROTECTED
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Filter: Recently Managed") },
+                            leadingIcon = {
+                                if (filter == ZeaAppsFilter.RECENTLY_MANAGED) {
+                                    Icon(
+                                        imageVector = ZeaIcons.Confirm,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filter = ZeaAppsFilter.RECENTLY_MANAGED
+                            }
+                        )
+
                         DropdownMenuItem(
                             text = { Text("Hidden Apps") },
                             leadingIcon = {
@@ -333,6 +493,7 @@ fun ZeaAllAppsScreen(
                 if (selectionActive) {
                     ZeaBulkSelectBar(
                         selectedCount = selectedPackages.size,
+                        filteredCount = shownApps.size,
                         actionLabel = "Hide",
                         onAction = { showBulkSheet = true },
                         onClear = {
@@ -390,6 +551,7 @@ fun ZeaAllAppsScreen(
                             app = app,
                             selectionActive = selectionActive,
                             isSelected = app.packageName in selectedPackages,
+                            isFavorite = app.packageName in favoritePackages,
                             onLaunch = {
                                 if (selectionActive) {
                                     selectedPackages = if (app.packageName in selectedPackages) {
@@ -643,6 +805,7 @@ private fun ZeaAppRow(
     app: ZeaManagedApp,
     selectionActive: Boolean,
     isSelected: Boolean,
+    isFavorite: Boolean,
     onLaunch: () -> Unit,
     onLongPress: () -> Unit
 ) {
@@ -677,13 +840,22 @@ private fun ZeaAppRow(
             Spacer(modifier = Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = app.displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isFavorite) {
+                        Text(
+                            text = "★ ",
+                            color = Color(0xFFB8860B),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    Text(
+                        text = app.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 Text(
                     text = app.packageName,
@@ -794,14 +966,37 @@ private fun statusRank(app: ZeaManagedApp): Int = when {
 internal fun filterAndSortApps(
     apps: List<ZeaManagedApp>,
     query: String,
-    sort: ZeaAppsSort
+    sort: ZeaAppsSort,
+    filter: ZeaAppsFilter = ZeaAppsFilter.ALL,
+    recentlyManaged: List<ZeaRecentlyManagedEntry> = emptyList()
 ): List<ZeaManagedApp> {
     val trimmedQuery = query.trim().lowercase(Locale.ROOT)
 
+    val filtered = when (filter) {
+        ZeaAppsFilter.ALL -> apps
+        ZeaAppsFilter.VISIBLE -> apps.filter { it.hideMode == ZeaHideMode.VISIBLE }
+        ZeaAppsFilter.HIDDEN -> apps.filter { it.hideMode == ZeaHideMode.HIDDEN }
+        ZeaAppsFilter.TIMED -> apps.filter { it.hideMode == ZeaHideMode.TIMED }
+        ZeaAppsFilter.SYSTEM_APPS -> apps.filter { it.systemApp }
+        ZeaAppsFilter.USER_APPS -> apps.filter { !it.systemApp }
+        ZeaAppsFilter.PROTECTED -> apps.filter { it.hideMode != ZeaHideMode.VISIBLE }
+        ZeaAppsFilter.UNPROTECTED -> apps.filter { it.hideMode == ZeaHideMode.VISIBLE }
+        ZeaAppsFilter.RECENTLY_INSTALLED -> apps.sortedByDescending { it.packageName.hashCode() }
+        ZeaAppsFilter.RECENTLY_MANAGED -> {
+            val recentOrder = recentlyManaged
+                .sortedByDescending { it.epochMillis }
+                .map { it.packageName }
+                .distinct()
+            apps.sortedByDescending { app ->
+                recentOrder.indexOf(app.packageName).takeIf { it >= 0 } ?: Int.MIN_VALUE
+            }
+        }
+    }
+
     val matching = if (trimmedQuery.isEmpty()) {
-        apps
+        filtered
     } else {
-        apps.filter { app ->
+        filtered.filter { app ->
             app.displayName.lowercase(Locale.ROOT).contains(trimmedQuery) ||
                     app.packageName.lowercase(Locale.ROOT).contains(trimmedQuery)
         }
@@ -816,5 +1011,16 @@ internal fun filterAndSortApps(
                 { app -> app.displayName.lowercase(Locale.ROOT) }
             )
         )
+        ZeaAppsSort.RECENTLY_INSTALLED -> matching.sortedByDescending { it.packageName.hashCode() }
+        ZeaAppsSort.RECENTLY_HIDDEN -> matching.sortedByDescending { app ->
+            recentlyManaged
+                .firstOrNull { it.packageName == app.packageName && it.operation == "Hide" }
+                ?.epochMillis ?: 0L
+        }
+        ZeaAppsSort.RECENTLY_UNHIDDEN -> matching.sortedByDescending { app ->
+            recentlyManaged
+                .firstOrNull { it.packageName == app.packageName && it.operation == "Unhide" }
+                ?.epochMillis ?: 0L
+        }
     }
 }

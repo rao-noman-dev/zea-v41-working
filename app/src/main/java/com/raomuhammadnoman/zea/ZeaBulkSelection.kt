@@ -123,7 +123,8 @@ fun ZeaBulkSelectBar(
     selectedCount: Int,
     actionLabel: String,
     onAction: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    filteredCount: Int? = null
 ) {
     Surface(
         modifier = Modifier
@@ -138,7 +139,11 @@ fun ZeaBulkSelectBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "$selectedCount selected",
+                text = if (filteredCount != null) {
+                    "$selectedCount of $filteredCount selected"
+                } else {
+                    "$selectedCount selected"
+                },
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )

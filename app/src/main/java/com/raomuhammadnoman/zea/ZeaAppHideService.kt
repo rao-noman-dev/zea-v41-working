@@ -24,6 +24,79 @@ data class ZeaHideOutcome(
  * logic, because a half-applied hide is the dangerous case here.
  */
 object ZeaAppHideService {
+    // Phase 3 history hook: every hide/unhide/timed outcome is recorded with a
+    // short subject + message and a distinguishable result. Never logs payloads.
+    // Successful outcomes also feed Recently Managed and the Safe Undo snapshot.
+    private suspend fun recordHideOutcome(
+        appContext: Context,
+        displayName: String,
+        packageName: String,
+        outcome: ZeaHideOutcome,
+        eventType: ZeaActivityEventType,
+        previousMode: ZeaHideMode? = null,
+        timedEndEpochMillis: Long = 0L
+    ) {
+        ZeaActivityLog.record(
+            appContext,
+            eventType,
+            displayName,
+            outcome.message.take(200),
+            if (outcome.success) ZeaActivityResult.SUCCESS else ZeaActivityResult.FAILURE
+        )
+        val opLabel = if (eventType == ZeaActivityEventType.TIMED_HIDE) "Timed hide" else "Hide"
+        ZeaRecentlyManaged.record(
+            appContext,
+            packageName,
+            displayName,
+            if (outcome.success) opLabel else "$opLabel (failed)"
+        )
+        if (outcome.success && previousMode != null) {
+            ZeaUndo.record(
+                appContext,
+                packageName,
+                displayName,
+                if (eventType == ZeaActivityEventType.TIMED_HIDE) {
+                    UndoOperation.TIMED_HIDE
+                } else {
+                    UndoOperation.HIDE
+                },
+                previousMode,
+                timedEndEpochMillis
+            )
+        }
+    }
+
+    private suspend fun recordUnhideOutcome(
+        appContext: Context,
+        displayName: String,
+        packageName: String,
+        outcome: ZeaHideOutcome,
+        previousMode: ZeaHideMode? = null
+    ) {
+        ZeaActivityLog.record(
+            appContext,
+            ZeaActivityEventType.UNHIDE,
+            displayName,
+            outcome.message.take(200),
+            if (outcome.success) ZeaActivityResult.SUCCESS else ZeaActivityResult.FAILURE
+        )
+        ZeaRecentlyManaged.record(
+            appContext,
+            packageName,
+            displayName,
+            if (outcome.success) "Unhide" else "Unhide (failed)"
+        )
+        if (outcome.success && previousMode != null) {
+            ZeaUndo.record(
+                appContext,
+                packageName,
+                displayName,
+                UndoOperation.UNHIDE,
+                previousMode
+            )
+        }
+    }
+
     suspend fun isFirstHiddenApp(context: Context): Boolean = withContext(Dispatchers.IO) {
         loadPrivateApps(context.applicationContext).isEmpty()
     }
@@ -36,7 +109,16 @@ object ZeaAppHideService {
 
         val ownerState = ZeaDeviceOwnerController.readUiState(appContext)
         if (!ownerState.isDeviceOwner) {
-            return hideAppInLockMode(appContext, app)
+            return hideAppInLockMode(appContext, app).also { outcome ->
+                recordHideOutcome(
+                    appContext,
+                    app.displayName,
+                    app.packageName,
+                    outcome,
+                    ZeaActivityEventType.HIDE,
+                    ZeaHideMode.VISIBLE
+                )
+            }
         }
         if (ownerState.protectionPaused) {
             return ZeaHideOutcome(
@@ -84,6 +166,14 @@ object ZeaAppHideService {
         }
 
         val firstRecord = recordsBeforeAdd.isEmpty()
+
+        // Safe Undo snapshot needs the mode the app was in before this hide.
+        val previousMode = withContext(Dispatchers.IO) {
+            if (loadTimedHides(appContext).any { stored ->
+                    stored.packageName.equals(record.packageName, ignoreCase = true)
+                }
+            ) ZeaHideMode.TIMED else ZeaHideMode.VISIBLE
+        }
 
         // The lock is raised before any policy change so protection is never
         // applied while installs remain open.
@@ -201,13 +291,30 @@ object ZeaAppHideService {
             return ZeaHideOutcome(
                 success = false,
                 message = "${record.displayName} was not hidden because final state verification failed. ${finalVerification.message} ${finalInstallLock.message} ${rollback.message}"
-            )
+            ).also { outcome ->
+                recordHideOutcome(
+                    appContext,
+                    record.displayName,
+                    record.packageName,
+                    outcome,
+                    ZeaActivityEventType.HIDE
+                )
+            }
         }
 
         return ZeaHideOutcome(
             success = true,
             message = "${record.displayName} is hidden and protected from uninstall."
-        )
+        ).also { outcome ->
+            recordHideOutcome(
+                appContext,
+                record.displayName,
+                record.packageName,
+                outcome,
+                ZeaActivityEventType.HIDE,
+                previousMode
+            )
+        }
     }
 
     suspend fun hideAppForTime(
@@ -230,14 +337,32 @@ object ZeaAppHideService {
             )
         }
 
-        val hidden = hideApp(context, app)
-        if (!hidden.success) {
-            return hidden
+        // Re-timing an already-managed app (e.g. extend/reduce/change end)
+        // must not re-run the hide transaction: hideApp would reject it as
+        // "already managed". Only the timer record and alarm get replaced.
+        val alreadyManaged = withContext(Dispatchers.IO) {
+            loadPrivateApps(appContext).any { stored ->
+                stored.packageName.equals(app.packageName, ignoreCase = true)
+            } || ZeaLockMode.isBlocked(appContext, app.packageName)
+        }
+        if (!alreadyManaged) {
+            val hidden = hideApp(context, app)
+            if (!hidden.success) {
+                return hidden
+            }
         }
 
         // If the end time passed while the hide transaction was committing,
-        // roll back instead of leaving an untimed hidden orphan behind.
+        // roll back instead of leaving an untimed hidden orphan behind. A
+        // re-time of an already-managed app needs no rollback: nothing was
+        // mutated yet, so the previous timer simply stays in effect.
         if (request.endEpochMillis <= System.currentTimeMillis()) {
+            if (alreadyManaged) {
+                return ZeaHideOutcome(
+                    success = false,
+                    message = "${app.displayName} timer was not changed because the selected time has already passed."
+                )
+            }
             val rollback = unhideApp(appContext, app.packageName)
             Log.w(
                 ZEA_DEVICE_OWNER_LOG_TAG,
@@ -250,6 +375,18 @@ object ZeaAppHideService {
         }
 
         val now = System.currentTimeMillis()
+
+        // Capture the previous timer so a failed re-time can restore it
+        // instead of unhiding an app the user never asked to release.
+        val previousTimedRecord = if (alreadyManaged) {
+            withContext(Dispatchers.IO) {
+                loadTimedHides(appContext).firstOrNull { stored ->
+                    stored.packageName.equals(app.packageName, ignoreCase = true)
+                }
+            }
+        } else {
+            null
+        }
 
         val record = ZeaTimedHideRecord(
             packageName = app.packageName,
@@ -265,6 +402,12 @@ object ZeaAppHideService {
             saveTimedHides(appContext, remaining + record)
         }
         if (!saved) {
+            if (alreadyManaged) {
+                return ZeaHideOutcome(
+                    success = false,
+                    message = "${app.displayName} timer was not changed because Zyro could not save the new end time. The previous timer is still active."
+                )
+            }
             val rollback = unhideApp(appContext, app.packageName)
             return ZeaHideOutcome(
                 success = false,
@@ -277,6 +420,13 @@ object ZeaAppHideService {
             ZeaTimedHide.schedule(appContext, record)
         }
         if (!alarmScheduled) {
+            if (alreadyManaged) {
+                restorePreviousTimer(appContext, previousTimedRecord)
+                return ZeaHideOutcome(
+                    success = false,
+                    message = "${app.displayName} timer was not changed because the restore alarm could not be scheduled. The previous timer is still active."
+                )
+            }
             val rolledBack = withContext(Dispatchers.IO) {
                 rollbackUnfinishedTimedHide(appContext, app.packageName)
             }
@@ -293,6 +443,13 @@ object ZeaAppHideService {
                 request.endEpochMillis
             )
             if (!timedBlockSaved) {
+                if (alreadyManaged) {
+                    restorePreviousTimer(appContext, previousTimedRecord)
+                    return ZeaHideOutcome(
+                        success = false,
+                        message = "${app.displayName} timer was not changed because the timed lock state could not be saved. The previous timer is still active."
+                    )
+                }
                 val rolledBack = withContext(Dispatchers.IO) {
                     rollbackUnfinishedTimedHide(appContext, app.packageName)
                 }
@@ -316,19 +473,74 @@ object ZeaAppHideService {
             expectedMode = ZeaHideMode.TIMED
         )
         if (!timedVerification.success) {
+            if (alreadyManaged) {
+                restorePreviousTimer(appContext, previousTimedRecord)
+                return ZeaHideOutcome(
+                    success = false,
+                    message = "${app.displayName} timer change did not reach a verified final state. ${timedVerification.message} The previous timer is still active."
+                ).also { outcome ->
+                    recordHideOutcome(
+                        appContext,
+                        app.displayName,
+                        app.packageName,
+                        outcome,
+                        ZeaActivityEventType.TIMED_HIDE
+                    )
+                }
+            }
             val rolledBack = withContext(Dispatchers.IO) {
                 rollbackUnfinishedTimedHide(appContext, app.packageName)
             }
             return ZeaHideOutcome(
                 success = false,
                 message = "${app.displayName} timed hide did not reach a verified final state. ${timedVerification.message} Rollback verified=$rolledBack."
-            )
+            ).also { outcome ->
+                recordHideOutcome(
+                    appContext,
+                    app.displayName,
+                    app.packageName,
+                    outcome,
+                    ZeaActivityEventType.TIMED_HIDE
+                )
+            }
         }
 
         return ZeaHideOutcome(
             success = true,
             message = modeMessage
-        )
+        ).also { outcome ->
+            recordHideOutcome(
+                appContext,
+                app.displayName,
+                app.packageName,
+                outcome,
+                ZeaActivityEventType.TIMED_HIDE,
+                if (alreadyManaged) ZeaHideMode.TIMED else ZeaHideMode.VISIBLE,
+                request.endEpochMillis
+            )
+        }
+    }
+
+    /** Restores a previously captured timer after a failed re-time attempt. */
+    private suspend fun restorePreviousTimer(
+        appContext: Context,
+        previousTimedRecord: ZeaTimedHideRecord?
+    ) {
+        withContext(Dispatchers.IO) {
+            val remaining = loadTimedHides(appContext).filterNot { stored ->
+                previousTimedRecord != null &&
+                        stored.packageName.equals(previousTimedRecord.packageName, ignoreCase = true)
+            }
+            val restored = if (previousTimedRecord != null) {
+                remaining + previousTimedRecord
+            } else {
+                remaining
+            }
+            saveTimedHides(appContext, restored)
+            if (previousTimedRecord != null) {
+                ZeaTimedHide.schedule(appContext, previousTimedRecord)
+            }
+        }
     }
 
     /**
@@ -353,6 +565,13 @@ object ZeaAppHideService {
         val recordsBefore = withContext(Dispatchers.IO) { loadPrivateApps(appContext) }
         val target = recordsBefore.firstOrNull { stored ->
             stored.packageName.equals(packageName, ignoreCase = true)
+        }
+        // Safe Undo snapshot needs the mode the app was in before this release.
+        val previousMode = withContext(Dispatchers.IO) {
+            if (loadTimedHides(appContext).any { stored ->
+                    stored.packageName.equals(packageName, ignoreCase = true)
+                }
+            ) ZeaHideMode.TIMED else ZeaHideMode.HIDDEN
         }
         if (target == null) {
             // No record means this package was never released through the
@@ -517,7 +736,9 @@ object ZeaAppHideService {
             return ZeaHideOutcome(
                 success = false,
                 message = "${target.displayName} reached a partial release state but final verification failed. ${finalVerification.message} ${lockResult.message}"
-            )
+            ).also { outcome ->
+                recordUnhideOutcome(appContext, target.displayName, target.packageName, outcome)
+            }
         }
 
         val lockNote = if (remaining.isEmpty()) {
@@ -529,7 +750,79 @@ object ZeaAppHideService {
         return ZeaHideOutcome(
             success = true,
             message = "${target.displayName} is visible again.$lockNote"
+        ).also { outcome ->
+            recordUnhideOutcome(
+                appContext,
+                target.displayName,
+                target.packageName,
+                outcome,
+                previousMode
+            )
+        }
+    }
+
+    /**
+     * Converts a timed hide into a permanent hide: the expiry alarm is
+     * cancelled AND the timed record is removed, so a later reboot or expiry
+     * sweep can never resurrect the timer and release the app.
+     */
+    suspend fun convertTimedHideToPermanent(
+        context: Context,
+        packageName: String
+    ): ZeaHideOutcome {
+        val appContext = context.applicationContext
+        val timedRecord = withContext(Dispatchers.IO) {
+            loadTimedHides(appContext).firstOrNull { stored ->
+                stored.packageName.equals(packageName, ignoreCase = true)
+            }
+        } ?: return ZeaHideOutcome(
+            success = false,
+            message = "This app does not have an active timer."
         )
+
+        val cleared = withContext(Dispatchers.IO) {
+            clearTimedHide(appContext, packageName)
+        }
+        if (!cleared) {
+            return ZeaHideOutcome(
+                success = false,
+                message = "${timedRecord.displayName} timer could not be removed. It is still active."
+            )
+        }
+
+        // Verify the app is still protected after dropping the timer record.
+        val stillManaged = withContext(Dispatchers.IO) {
+            loadPrivateApps(appContext).any { stored ->
+                stored.packageName.equals(packageName, ignoreCase = true)
+            } || ZeaLockMode.isBlocked(appContext, packageName)
+        }
+        if (!stillManaged) {
+            // The timer is gone but the app is not managed; fail closed by
+            // restoring the timer so the app cannot be stranded unprotected
+            // without a record.
+            withContext(Dispatchers.IO) {
+                saveTimedHides(appContext, loadTimedHides(appContext) + timedRecord)
+                ZeaTimedHide.schedule(appContext, timedRecord)
+            }
+            return ZeaHideOutcome(
+                success = false,
+                message = "${timedRecord.displayName} could not be converted to permanent because its protection record is missing. The timer was restored."
+            )
+        }
+
+        ZeaAppCatalog.invalidateCatalogCache()
+        return ZeaHideOutcome(
+            success = true,
+            message = "${timedRecord.displayName} timer cancelled; the app stays hidden permanently."
+        ).also { outcome ->
+            ZeaActivityLog.record(
+                appContext,
+                ZeaActivityEventType.TIMED_HIDE,
+                timedRecord.displayName,
+                outcome.message.take(200),
+                ZeaActivityResult.SUCCESS
+            )
+        }
     }
 
     /**
@@ -719,7 +1012,15 @@ object ZeaAppHideService {
         ZeaHideOutcome(
             success = true,
             message = "${target.displayName} is unlocked and visible again."
-        )
+        ).also { outcome ->
+            recordUnhideOutcome(
+                appContext,
+                target.displayName,
+                target.packageName,
+                outcome,
+                ZeaHideMode.HIDDEN
+            )
+        }
     }
 
     /**

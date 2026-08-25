@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -120,6 +121,7 @@ private fun ZeaHiddenListScreen(
     var reloadToken by remember { mutableIntStateOf(0) }
     var clockToken by remember { mutableIntStateOf(0) }
     var confirmApp by remember { mutableStateOf<ZeaManagedApp?>(null) }
+    var timedManageApp by remember { mutableStateOf<ZeaManagedApp?>(null) }
     var launchInProgress by remember { mutableStateOf(false) }
     var unhideInProgress by remember { mutableStateOf(false) }
     var outcomeMessage by remember { mutableStateOf("") }
@@ -498,6 +500,8 @@ private fun ZeaHiddenListScreen(
                                 onManage = {
                                     if (selectionActive) {
                                         showBulkUnhideConfirm = true
+                                    } else if (mode == ZeaHideMode.TIMED) {
+                                        timedManageApp = app
                                     } else {
                                         confirmApp = app
                                     }
@@ -563,6 +567,94 @@ private fun ZeaHiddenListScreen(
                 }
             },
             onDismiss = { confirmApp = null }
+        )
+    }
+
+    // Phase 3: Timed apps management dialog (extend/reduce/change end/cancel/convert)
+    val activeTimedManageApp = timedManageApp
+    if (activeTimedManageApp != null && mode == ZeaHideMode.TIMED) {
+        ZeaTimedManageDialog(
+            app = activeTimedManageApp,
+            onDismiss = { timedManageApp = null },
+            onExtend = { deltaMinutes ->
+                scope.launch {
+                    val newEnd = activeTimedManageApp.hiddenUntilEpochMillis + deltaMinutes * 60_000L
+                    val outcome = ZeaAppHideService.hideAppForTime(
+                        context,
+                        activeTimedManageApp,
+                        ZeaTimedHideRequest(
+                            label = "extended by $deltaMinutes min",
+                            endEpochMillis = newEnd
+                        )
+                    )
+                    timedManageApp = null
+                    outcomeSuccess = outcome.success
+                    outcomeMessage = outcome.message
+                    reloadToken++
+                }
+            },
+            onReduce = { deltaMinutes ->
+                scope.launch {
+                    val newEnd = activeTimedManageApp.hiddenUntilEpochMillis - deltaMinutes * 60_000L
+                    if (newEnd <= System.currentTimeMillis()) {
+                        val outcome = ZeaAppHideService.unhideApp(context, activeTimedManageApp.packageName)
+                        timedManageApp = null
+                        outcomeSuccess = outcome.success
+                        outcomeMessage = outcome.message
+                        reloadToken++
+                    } else {
+                        val outcome = ZeaAppHideService.hideAppForTime(
+                            context,
+                            activeTimedManageApp,
+                            ZeaTimedHideRequest(
+                                label = "reduced by $deltaMinutes min",
+                                endEpochMillis = newEnd
+                            )
+                        )
+                        timedManageApp = null
+                        outcomeSuccess = outcome.success
+                        outcomeMessage = outcome.message
+                        reloadToken++
+                    }
+                }
+            },
+            onChangeEnd = { newEndEpoch ->
+                scope.launch {
+                    val outcome = ZeaAppHideService.hideAppForTime(
+                        context,
+                        activeTimedManageApp,
+                        ZeaTimedHideRequest(
+                            label = "new end time",
+                            endEpochMillis = newEndEpoch
+                        )
+                    )
+                    timedManageApp = null
+                    outcomeSuccess = outcome.success
+                    outcomeMessage = outcome.message
+                    reloadToken++
+                }
+            },
+            onCancelTimer = {
+                scope.launch {
+                    val outcome = ZeaAppHideService.unhideApp(context, activeTimedManageApp.packageName)
+                    timedManageApp = null
+                    outcomeSuccess = outcome.success
+                    outcomeMessage = outcome.message
+                    reloadToken++
+                }
+            },
+            onConvertToPermanent = {
+                scope.launch {
+                    val outcome = ZeaAppHideService.convertTimedHideToPermanent(
+                        context,
+                        activeTimedManageApp.packageName
+                    )
+                    timedManageApp = null
+                    outcomeSuccess = outcome.success
+                    outcomeMessage = outcome.message
+                    reloadToken++
+                }
+            }
         )
     }
 
@@ -744,6 +836,55 @@ private fun ZeaHiddenAppRow(
             }
         }
     }
+}
+
+@Composable
+private fun ZeaTimedManageDialog(
+    app: ZeaManagedApp,
+    onDismiss: () -> Unit,
+    onExtend: (Long) -> Unit,
+    onReduce: (Long) -> Unit,
+    onChangeEnd: (Long) -> Unit,
+    onCancelTimer: () -> Unit,
+    onConvertToPermanent: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Manage ${app.displayName}") },
+        text = {
+            Column {
+                Text(
+                    text = "Current end: ${zeaFormatEpoch(app.hiddenUntilEpochMillis)}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                TextButton(onClick = { onExtend(15) }) {
+                    Text("Extend by 15 minutes")
+                }
+                TextButton(onClick = { onExtend(60) }) {
+                    Text("Extend by 1 hour")
+                }
+                TextButton(onClick = { onReduce(15) }) {
+                    Text("Reduce by 15 minutes")
+                }
+                TextButton(onClick = { onReduce(60) }) {
+                    Text("Reduce by 1 hour")
+                }
+                TextButton(onClick = onCancelTimer) {
+                    Text("Cancel timer (unhide now)")
+                }
+                TextButton(onClick = onConvertToPermanent) {
+                    Text("Convert to permanent hidden")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }
 
 @Composable

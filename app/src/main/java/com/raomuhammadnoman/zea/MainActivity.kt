@@ -1075,6 +1075,12 @@ fun ZeaApp() {
     var showDeveloperControls by rememberSaveable { mutableStateOf(false) }
     var showSettingsScreen by rememberSaveable { mutableStateOf(false) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
+    var showGroupsScreen by rememberSaveable { mutableStateOf(false) }
+    var showProfilesScreen by rememberSaveable { mutableStateOf(false) }
+    var showScheduleScreen by rememberSaveable { mutableStateOf(false) }
+    var showHistoryScreen by rememberSaveable { mutableStateOf(false) }
+    var showSearchScreen by rememberSaveable { mutableStateOf(false) }
+    var appDetailsPackage by rememberSaveable { mutableStateOf("") }
     var homeMenuExpanded by remember { mutableStateOf(false) }
 
     var favoriteContactsInput by remember { mutableStateOf(loadFavoriteContacts(context)) }
@@ -1104,6 +1110,7 @@ fun ZeaApp() {
     var homeOwnerActive by remember { mutableStateOf(false) }
     var homeStatsVisible by remember { mutableStateOf(false) }
     var homeStatsShowToken by remember { mutableStateOf(0) }
+    var homeFavorites by remember { mutableStateOf<List<ZeaManagedApp>>(emptyList()) }
 
     suspend fun refreshHomeStats() {
         try {
@@ -1118,6 +1125,15 @@ fun ZeaApp() {
                         app.hiddenUntilEpochMillis > System.currentTimeMillis()
             }
             homeOwnerActive = ownerActive
+
+            // Phase 3 favorites: prune uninstalled, then resolve to app models
+            // preserving the user's own pinning order.
+            val installed = apps.map { it.packageName }.toSet()
+            ZeaFavorites.pruneUninstalled(context, installed)
+            val favoritePackages = ZeaFavorites.load(context)
+            homeFavorites = favoritePackages.mapNotNull { pkg ->
+                apps.firstOrNull { it.packageName.equals(pkg, ignoreCase = true) }
+            }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -2265,6 +2281,55 @@ fun ZeaApp() {
             return@MaterialTheme
         }
 
+        if (showGroupsScreen) {
+            ZeaGroupsScreen(onBack = { showGroupsScreen = false })
+            return@MaterialTheme
+        }
+
+        if (showProfilesScreen) {
+            ZeaProfilesScreen(onBack = { showProfilesScreen = false })
+            return@MaterialTheme
+        }
+
+        if (showScheduleScreen) {
+            ZeaScheduleScreen(onBack = { showScheduleScreen = false })
+            return@MaterialTheme
+        }
+
+        if (showHistoryScreen) {
+            ZeaHistoryScreen(onBack = { showHistoryScreen = false })
+            return@MaterialTheme
+        }
+
+        if (showSearchScreen) {
+            ZeaSearchScreen(
+                onBack = { showSearchScreen = false },
+                onNavigate = { route ->
+                    showSearchScreen = false
+                    when {
+                        route.startsWith("app_details:") -> {
+                            appDetailsPackage = route.removePrefix("app_details:")
+                        }
+                        route == "groups" -> showGroupsScreen = true
+                        route == "profiles" -> showProfilesScreen = true
+                        route == "schedules" -> showScheduleScreen = true
+                        route == "history" -> showHistoryScreen = true
+                        route == "diagnostics" -> showDiagnostics = true
+                        route == "settings" -> showSettingsScreen = true
+                    }
+                }
+            )
+            return@MaterialTheme
+        }
+
+        if (appDetailsPackage.isNotEmpty()) {
+            ZeaAppDetailsScreen(
+                packageName = appDetailsPackage,
+                onBack = { appDetailsPackage = "" }
+            )
+            return@MaterialTheme
+        }
+
         Surface(
             modifier = mainSurfaceModifier,
             color = MaterialTheme.colorScheme.background
@@ -2531,6 +2596,72 @@ fun ZeaApp() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Phase 3 quick actions row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ZeaHomeQuickAction(label = "Search", onClick = { showSearchScreen = true })
+                    ZeaHomeQuickAction(label = "Groups", onClick = { showGroupsScreen = true })
+                    ZeaHomeQuickAction(label = "Profiles", onClick = { showProfilesScreen = true })
+                    ZeaHomeQuickAction(label = "Schedules", onClick = { showScheduleScreen = true })
+                    ZeaHomeQuickAction(label = "History", onClick = { showHistoryScreen = true })
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Phase 3 favorites row: pinned apps, tap opens App Details.
+                if (homeFavorites.isNotEmpty()) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFFFFF9EC),
+                        border = BorderStroke(1.dp, Color(0xFFF0E2B8))
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            Text(
+                                text = "★ Favorites",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Color(0xFF7A5B00)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            homeFavorites.forEach { favorite ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            appDetailsPackage = favorite.packageName
+                                        }
+                                        .padding(vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = "★",
+                                        color = Color(0xFFB8860B),
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        text = favorite.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        text = when (favorite.hideMode) {
+                                            ZeaHideMode.HIDDEN -> "Hidden"
+                                            ZeaHideMode.TIMED -> "Timed"
+                                            else -> "Visible"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
                 if (topStatusMessage.isNotBlank()) {
                     val bannerBackground = when (topStatusType) {
                         "success" -> Color(0xFFE8F5E9)
@@ -2551,12 +2682,37 @@ fun ZeaApp() {
                         shape = RoundedCornerShape(16.dp),
                         color = bannerBackground
                     ) {
-                        Text(
-                            text = topStatusMessage,
-                            color = bannerTextColor,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(12.dp)
-                        )
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = topStatusMessage,
+                                color = bannerTextColor,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            // Phase 3: Undo option after successful hide/unhide
+                            if (topStatusType == "success") {
+                                val canUndo = remember { mutableStateOf(false) }
+                                LaunchedEffect(topStatusId) {
+                                    canUndo.value = ZeaUndo.canUndo(context)
+                                }
+                                if (canUndo.value) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Undo last action",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier
+                                            .clickable {
+                                                coroutineScope.launch {
+                                                    val outcome = ZeaUndo.performUndo(context)
+                                                    topStatusMessage = outcome?.message ?: "Nothing to undo."
+                                                    topStatusId++
+                                                }
+                                            }
+                                            .padding(vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -2751,6 +2907,28 @@ private fun ZeaHomeStatItem(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = Color(0xFF5F6368)
+        )
+    }
+}
+
+@Composable
+private fun ZeaHomeQuickAction(
+    label: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFFF3F7FC),
+        border = BorderStroke(1.dp, Color(0xFFD7E3F4))
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF1A3C6E),
+            modifier = Modifier
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .clickable(onClick = onClick)
         )
     }
 }
