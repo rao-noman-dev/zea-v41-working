@@ -26,7 +26,7 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = keystoreProps["storeFile"]?.let { file(it as String) }
+            storeFile = keystoreProps["storeFile"]?.let { file(it as String) } ?: file("/tmp/debug.keystore")
             storePassword = keystoreProps["storePassword"] as String?
             keyAlias = keystoreProps["keyAlias"] as String?
             keyPassword = keystoreProps["keyPassword"] as String?
