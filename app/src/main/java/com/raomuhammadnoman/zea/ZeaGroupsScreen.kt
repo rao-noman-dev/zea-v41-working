@@ -69,6 +69,8 @@ fun ZeaGroupsScreen(onBack: () -> Unit) {
 
     fun refresh() {
         scope.launch {
+            // Ghost members (uninstalled apps) never linger in the UI.
+            ZeaGroups.pruneStaleMembers(context)
             groups = ZeaGroups.load(context)
         }
     }
@@ -136,21 +138,24 @@ fun ZeaGroupsScreen(onBack: () -> Unit) {
                             onHideGroup = {
                                 scope.launch {
                                     val result = ZeaGroups.hideGroup(context, group.id)
-                                    operationMessage = "${result.succeeded.size} hidden, ${result.failed.size} failed."
+                                    operationMessage = "${result.succeeded.size} hidden, ${result.failed.size} failed." +
+                                            if (!result.journalClosed) " Journal could not close; batch stays recoverable." else ""
                                     refresh()
                                 }
                             },
                             onUnhideGroup = {
                                 scope.launch {
                                     val result = ZeaGroups.unhideGroup(context, group.id)
-                                    operationMessage = "${result.succeeded.size} unhidden, ${result.failed.size} failed."
+                                    operationMessage = "${result.succeeded.size} unhidden, ${result.failed.size} failed." +
+                                            if (!result.journalClosed) " Journal could not close; batch stays recoverable." else ""
                                     refresh()
                                 }
                             },
                             onHideForTime = { request ->
                                 scope.launch {
                                     val result = ZeaGroups.hideGroupForTime(context, group.id, request)
-                                    operationMessage = "${result.succeeded.size} hidden for ${request.label}, ${result.failed.size} failed."
+                                    operationMessage = "${result.succeeded.size} hidden for ${request.label}, ${result.failed.size} failed." +
+                                            if (!result.journalClosed) " Journal could not close; batch stays recoverable." else ""
                                     refresh()
                                 }
                             }

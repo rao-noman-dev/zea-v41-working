@@ -61,6 +61,8 @@ fun ZeaProfilesScreen(onBack: () -> Unit) {
 
     fun refresh() {
         scope.launch {
+            // Ghost members (uninstalled apps) never linger in the UI.
+            ZeaProfiles.pruneStaleMembership(context)
             profiles = ZeaProfiles.load(context)
         }
     }

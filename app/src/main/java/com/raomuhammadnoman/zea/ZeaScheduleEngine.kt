@@ -19,7 +19,13 @@ data class ZeaScheduleFireDecision(
 /** Prior state captured at START so END never blindly unhides manual state. */
 data class ZeaScheduleOwnershipRecord(
     val previousMode: ZeaHideMode,
-    val previousTimedEndEpochMillis: Long
+    val previousTimedEndEpochMillis: Long,
+    /**
+     * When this schedule first claimed the package in the current cycle.
+     * Overlapping schedules use it to decide which claim carries the ORIGINAL
+     * user state: the earliest claim does.
+     */
+    val claimedAtEpochMillis: Long = 0L
 )
 
 /** What END must do for one package, given what START captured. */
@@ -77,12 +83,17 @@ fun zeaScheduleFirePlan(
         }
     }
 
-    // END phase: if the window is somehow still open, keep it; otherwise expire.
+    // END phase: a PHASE_END broadcast is NOT proof the window ended. Verify
+    // against the intended window first — an early or stale END must retain
+    // protection and re-arm the real end instead of releasing it.
     val activeEnd = zeaScheduleActiveWindow(schedule, nowEpochMillis)
     return if (activeEnd != null && nowEpochMillis < activeEnd) {
-        ZeaScheduleFireDecision(ZeaScheduleAction.UNHIDE, activeEnd)
+        // Window still open: this END is early/stale. Keep everything hidden
+        // and re-arm the true end of the current window.
+        ZeaScheduleFireDecision(ZeaScheduleAction.SKIP, activeEnd)
     } else {
-        ZeaScheduleFireDecision(ZeaScheduleAction.EXPIRED, 0L)
+        // The intended window genuinely ended: release protection.
+        ZeaScheduleFireDecision(ZeaScheduleAction.UNHIDE, 0L)
     }
 }
 
@@ -153,6 +164,26 @@ fun zeaScheduleEndPlan(
                 ZeaScheduleEndAction.UNHIDE
             }
         else -> ZeaScheduleEndAction.UNHIDE
+    }
+}
+
+/**
+ * Overlap transfer: when an ending schedule still overlaps another active
+ * schedule for the same package, the surviving claim must carry the ORIGINAL
+ * user state — otherwise the final owner would restore "hidden", which was
+ * schedule-produced, not user state. The record of the EARLIEST claim wins;
+ * a missing record yields the other side unchanged.
+ */
+fun zeaScheduleMergedOwnership(
+    ending: ZeaScheduleOwnershipRecord?,
+    surviving: ZeaScheduleOwnershipRecord?
+): ZeaScheduleOwnershipRecord? {
+    if (ending == null) return surviving
+    if (surviving == null) return ending
+    return if (ending.claimedAtEpochMillis <= surviving.claimedAtEpochMillis) {
+        ending
+    } else {
+        surviving
     }
 }
 

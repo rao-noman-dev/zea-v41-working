@@ -1,5 +1,6 @@
 package com.raomuhammadnoman.zea
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,11 +37,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,7 +61,14 @@ fun ZeaAppDetailsScreen(
     var groups by remember { mutableStateOf<List<ZeaGroup>>(emptyList()) }
     var operationMessage by remember { mutableStateOf("") }
     var showTimeDialog by remember { mutableStateOf(false) }
+    var showGroupDialog by remember { mutableStateOf(false) }
     var launchInProgress by remember { mutableStateOf(false) }
+    var appVersion by remember { mutableStateOf("") }
+    var hiddenSinceEpoch by remember { mutableStateOf(0L) }
+    var uninstallProtected by remember { mutableStateOf<Boolean?>(null) }
+    var lastActionLabel by remember { mutableStateOf("") }
+    var memberProfiles by remember { mutableStateOf<List<String>>(emptyList()) }
+    var memberSchedules by remember { mutableStateOf<List<String>>(emptyList()) }
     // Unified identity: the same favorites identity rules used everywhere else,
     // so the favorite state here never drifts from search or list surfaces.
     var favoritePackages by remember { mutableStateOf(emptySet<String>()) }
@@ -65,6 +79,39 @@ fun ZeaAppDetailsScreen(
             favoritePackages = ZeaFavorites.load(context).toSet()
             isFavorite = ZeaFavorites.isFavorite(context, packageName)
             groups = ZeaGroups.load(context)
+            appVersion = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.packageManager.getPackageInfo(packageName, 0).versionName
+                }.getOrNull().orEmpty()
+            }
+            hiddenSinceEpoch = withContext(Dispatchers.IO) {
+                loadTimedHides(context).firstOrNull {
+                    it.packageName.equals(packageName, ignoreCase = true)
+                }?.hiddenAtEpochMillis ?: 0L
+            }
+            uninstallProtected = withContext(Dispatchers.IO) {
+                ZeaDeviceOwnerController.isUninstallBlocked(context, packageName)
+            }
+            lastActionLabel = ZeaRecentlyManaged.load(context)
+                .filter { it.packageName.equals(packageName, ignoreCase = true) }
+                .maxByOrNull { it.epochMillis }
+                ?.let { "${it.operation} • ${zeaFormatEpoch(it.epochMillis)}" }
+                .orEmpty()
+            memberProfiles = ZeaProfiles.load(context)
+                .filter { profile ->
+                    profile.hiddenPackages.any { it.equals(packageName, ignoreCase = true) } ||
+                            profile.timedPackages.keys.any { it.equals(packageName, ignoreCase = true) }
+                }
+                .map { it.name }
+            val groupIds = groups
+                .filter { it.memberPackages.any { m -> m.equals(packageName, ignoreCase = true) } }
+                .mapTo(mutableSetOf()) { it.id }
+            memberSchedules = ZeaSchedules.load(context)
+                .filter { schedule ->
+                    schedule.targetPackages.any { it.equals(packageName, ignoreCase = true) } ||
+                            (schedule.targetGroupId != null && schedule.targetGroupId in groupIds)
+                }
+                .map { it.name }
         }
     }
 
@@ -128,16 +175,36 @@ fun ZeaAppDetailsScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = currentApp.displayName,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
-                    )
-                    Text(
-                        text = currentApp.packageName,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
+                    val iconBitmap by produceState<ImageBitmap?>(initialValue = null, packageName) {
+                        value = withContext(Dispatchers.IO) {
+                            runCatching {
+                                context.packageManager.getApplicationIcon(packageName)
+                                    .toBitmap(width = 96, height = 96)
+                                    .asImageBitmap()
+                            }.getOrNull()
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        iconBitmap?.let { bitmap ->
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = "${currentApp.displayName} icon",
+                                modifier = Modifier.height(48.dp).padding(end = 12.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = currentApp.displayName,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp
+                            )
+                            Text(
+                                text = currentApp.packageName,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(12.dp))
                     ZeaAppDetailRow("State", currentApp.hideMode.name)
                     ZeaAppDetailRow("Favorite", if (isFavorite) "Yes" else "No")
@@ -159,12 +226,35 @@ fun ZeaAppDetailsScreen(
                         val remainingLabel = if (hours > 0) "${hours}h ${mins}m" else "${mins}m"
                         ZeaAppDetailRow("Remaining time", remainingLabel)
                     }
+                    if (appVersion.isNotEmpty()) {
+                        ZeaAppDetailRow("Version", appVersion)
+                    }
                     if (currentApp.firstInstallTimeEpochMillis > 0) {
                         ZeaAppDetailRow("Installed", zeaFormatEpoch(currentApp.firstInstallTimeEpochMillis))
                     }
-                    val memberGroups = groups.filter { it.memberPackages.contains(packageName) }
+                    if (hiddenSinceEpoch > 0) {
+                        ZeaAppDetailRow("Hidden since", zeaFormatEpoch(hiddenSinceEpoch))
+                    }
+                    uninstallProtected?.let { blocked ->
+                        ZeaAppDetailRow(
+                            "Uninstall protection",
+                            if (blocked) "On" else "Off"
+                        )
+                    }
+                    if (lastActionLabel.isNotEmpty()) {
+                        ZeaAppDetailRow("Last ZYRO action", lastActionLabel)
+                    }
+                    val memberGroups = groups.filter {
+                        it.memberPackages.any { m -> m.equals(packageName, ignoreCase = true) }
+                    }
                     if (memberGroups.isNotEmpty()) {
                         ZeaAppDetailRow("Groups", memberGroups.joinToString { it.name })
+                    }
+                    if (memberProfiles.isNotEmpty()) {
+                        ZeaAppDetailRow("Profiles", memberProfiles.joinToString())
+                    }
+                    if (memberSchedules.isNotEmpty()) {
+                        ZeaAppDetailRow("Schedules", memberSchedules.joinToString())
                     }
                 }
             }
@@ -205,6 +295,12 @@ fun ZeaAppDetailsScreen(
                     Text("Hide for Time")
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { showGroupDialog = true }) {
+                    Text("Add / remove groups")
+                }
+            }
             if (currentApp.launcherActivityName.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
@@ -233,6 +329,52 @@ fun ZeaAppDetailsScreen(
                 }
             }
         }
+    }
+
+    if (showGroupDialog) {
+        AlertDialog(
+            onDismissRequest = { showGroupDialog = false },
+            title = { Text("Groups for ${app?.displayName ?: packageName}") },
+            text = {
+                if (groups.isEmpty()) {
+                    Text("No groups yet. Create one from the Groups tab.")
+                } else {
+                    Column {
+                        groups.forEach { group ->
+                            val member = group.memberPackages.any {
+                                it.equals(packageName, ignoreCase = true)
+                            }
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        if (member) {
+                                            ZeaGroups.removeMember(context, group.id, packageName)
+                                        } else {
+                                            ZeaGroups.addMember(context, group.id, packageName)
+                                        }
+                                        refresh()
+                                    }
+                                }
+                            ) {
+                                Text(
+                                    (if (member) "✓ " else "") + group.name,
+                                    color = if (member) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showGroupDialog = false }) {
+                    Text("Done")
+                }
+            }
+        )
     }
 
     if (showTimeDialog) {

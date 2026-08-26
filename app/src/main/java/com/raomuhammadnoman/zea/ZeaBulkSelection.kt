@@ -444,7 +444,9 @@ fun ZeaBulkOutcomeDialog(
     successCount: Int,
     failures: List<String>,
     actionLabel: String,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Non-null when a bulk undo snapshot is available; invoked on [Undo]. */
+    onUndo: (() -> Unit)? = null
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -506,6 +508,15 @@ fun ZeaBulkOutcomeDialog(
             ) {
                 Text("OK")
             }
+        },
+        dismissButton = if (onUndo != null) {
+            {
+                TextButton(onClick = onUndo) {
+                    Text("Undo")
+                }
+            }
+        } else {
+            null
         }
     )
 }
@@ -586,6 +597,9 @@ internal suspend fun runBulkHide(
     }
     val failures = mutableListOf<String>()
     var journalWriteFailed = false
+    // Bulk undo snapshot: per-app single-slot undo is suppressed during the
+    // batch; every verified app contributes one entry to a bulk snapshot.
+    val undoEntries = mutableListOf<ZeaUndoEntry>()
 
     onProgress(done, total)
 
@@ -599,9 +613,9 @@ internal suspend fun runBulkHide(
             delay(zeaBulkStepDelayMillis)
 
             val outcome = if (request != null) {
-                ZeaAppHideService.hideAppForTime(context, app, request)
+                ZeaAppHideService.hideAppForTime(context, app, request, suppressUndoRecord = true)
             } else {
-                ZeaAppHideService.hideApp(context, app)
+                ZeaAppHideService.hideApp(context, app, suppressUndoRecord = true)
             }
 
             if (outcome.success) {
@@ -617,6 +631,15 @@ internal suspend fun runBulkHide(
                     journalWriteFailed = true
                     break@bulkPasses
                 }
+                undoEntries += ZeaUndoEntry(
+                    operation = if (request != null) UndoOperation.TIMED_HIDE else UndoOperation.HIDE,
+                    packageName = app.packageName,
+                    displayName = app.displayName,
+                    previousMode = app.hideMode,
+                    timedEndEpochMillis = app.hiddenUntilEpochMillis,
+                    epochMillis = System.currentTimeMillis(),
+                    appliedTimedEndEpochMillis = request?.endEpochMillis ?: 0L
+                )
                 processedKeys.add(app.packageName.lowercase())
                 done++
                 onProgress(done, total)
@@ -630,15 +653,20 @@ internal suspend fun runBulkHide(
         pending = stillPending
     }
 
+    var journalClosed = true
     if (!journalWriteFailed) {
         val finalJournal = ZeaBatchJournal.readActive(context)
         if (finalJournal?.batchId == journal.batchId && ZeaBatchJournal.allTargetsProcessed(finalJournal)) {
             if (!ZeaBatchJournal.complete(context, journal.batchId)) {
+                journalClosed = false
                 failures.add(
                     "All target states were processed, but the durable batch journal could not be closed. It was retained for safe recovery."
                 )
             }
         }
+    }
+    if (journalClosed && undoEntries.isNotEmpty()) {
+        ZeaUndo.recordBulk(context, undoEntries)
     }
 
     done to failures
@@ -682,6 +710,7 @@ internal suspend fun runBulkUnhide(
     }
     val failures = mutableListOf<String>()
     var journalWriteFailed = false
+    val undoEntries = mutableListOf<ZeaUndoEntry>()
 
     onProgress(done, total)
 
@@ -694,7 +723,11 @@ internal suspend fun runBulkUnhide(
         for (app in pending) {
             delay(zeaBulkStepDelayMillis)
 
-            val outcome = ZeaAppHideService.unhideApp(context, app.packageName)
+            val outcome = ZeaAppHideService.unhideApp(
+                context,
+                app.packageName,
+                suppressUndoRecord = true
+            )
 
             if (outcome.success) {
                 val journaled = ZeaBatchJournal.markProcessed(
@@ -709,6 +742,14 @@ internal suspend fun runBulkUnhide(
                     journalWriteFailed = true
                     break@bulkPasses
                 }
+                undoEntries += ZeaUndoEntry(
+                    operation = UndoOperation.UNHIDE,
+                    packageName = app.packageName,
+                    displayName = app.displayName,
+                    previousMode = app.hideMode,
+                    timedEndEpochMillis = app.hiddenUntilEpochMillis,
+                    epochMillis = System.currentTimeMillis()
+                )
                 processedKeys.add(app.packageName.lowercase())
                 done++
                 onProgress(done, total)
@@ -722,15 +763,20 @@ internal suspend fun runBulkUnhide(
         pending = stillPending
     }
 
+    var journalClosed = true
     if (!journalWriteFailed) {
         val finalJournal = ZeaBatchJournal.readActive(context)
         if (finalJournal?.batchId == journal.batchId && ZeaBatchJournal.allTargetsProcessed(finalJournal)) {
             if (!ZeaBatchJournal.complete(context, journal.batchId)) {
+                journalClosed = false
                 failures.add(
                     "All target states were processed, but the durable batch journal could not be closed. It was retained for safe recovery."
                 )
             }
         }
+    }
+    if (journalClosed && undoEntries.isNotEmpty()) {
+        ZeaUndo.recordBulk(context, undoEntries)
     }
 
     done to failures

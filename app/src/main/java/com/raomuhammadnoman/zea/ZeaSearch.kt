@@ -36,19 +36,25 @@ object ZeaSearch {
 
         val results = mutableListOf<ZeaSearchResult>()
 
-        // Privacy gate: apps registered in the private-app registry never leak
-        // into global search results, regardless of the query. Hiding an app
-        // must hide its identity from every search surface too.
-        val privatePackages = loadPrivateApps(context)
-            .map { it.packageName.lowercase() }
-            .toSet()
+        // Privacy gate (authentication-based, not permanent omission):
+        // hidden/timed identity is REDACTED only while the session is not
+        // authenticated against the Zyro lock. After authentication the same
+        // apps stay searchable with their current status, as the approved
+        // Phase-3 search behavior requires. When the lock is disabled there
+        // is no privacy boundary and everything is searchable.
+        val lockEnabled = getZeaPrefs(context)
+            .getBoolean(ZeaStorageContract.APP_LOCK_ENABLED, false)
+        val revealSensitive = zeaSearchMayRevealSensitive(
+            lockEnabled = lockEnabled,
+            sessionAuthenticated = zeaGateSessionUnlockedTaskId != null
+        )
 
         // Apps — subtitle reports the coherent CURRENT status, not just the
         // package name: Visible / Hidden / Timed (+ remaining) / Protected.
         val apps = ZeaAppCatalog.loadManagedApps(context)
         val now = System.currentTimeMillis()
         apps.forEach { app ->
-            if (app.packageName.lowercase() in privatePackages) return@forEach
+            if (!revealSensitive && app.hideMode != ZeaHideMode.VISIBLE) return@forEach
             if (app.displayName.lowercase().contains(lowerQuery) ||
                 app.packageName.lowercase().contains(lowerQuery)
             ) {
@@ -124,6 +130,16 @@ object ZeaSearch {
         results
     }
 }
+
+/**
+ * The search privacy gate, pure so it is unit testable: sensitive (hidden/
+ * timed) app identity may be revealed when the Zyro lock is OFF (no privacy
+ * boundary exists) or when the current session has authenticated against it.
+ */
+internal fun zeaSearchMayRevealSensitive(
+    lockEnabled: Boolean,
+    sessionAuthenticated: Boolean
+): Boolean = !lockEnabled || sessionAuthenticated
 
 /**
  * Coherent CURRENT status line for one app, pure so it is unit testable:

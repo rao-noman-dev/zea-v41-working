@@ -164,6 +164,16 @@ object ZeaUndo {
         (app?.hideMode ?: ZeaHideMode.VISIBLE) to (app?.hiddenUntilEpochMillis ?: 0L)
     }
 
+    /** True when at least one bulk entry is fresh and still matches the exact
+     *  state the batch produced. */
+    suspend fun canUndoBulk(context: Context): Boolean {
+        val now = System.currentTimeMillis()
+        return loadBulk(context).any { entry ->
+            val (mode, timedEnd) = currentStateOf(context, entry.packageName)
+            zeaUndoIsSafe(entry, mode, timedEnd, now)
+        }
+    }
+
     /** True when the snapshot is fresh and the app still matches the exact
      *  state this operation produced. */
     suspend fun canUndo(context: Context): Boolean {

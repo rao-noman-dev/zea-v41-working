@@ -702,11 +702,29 @@ private fun ZeaHiddenListScreen(
 
     val activeBulkOutcome = bulkOutcome
     if (activeBulkOutcome != null) {
+        var undoAvailable by remember { mutableStateOf(false) }
+        LaunchedEffect(activeBulkOutcome) {
+            undoAvailable = ZeaUndo.canUndoBulk(context)
+        }
         ZeaBulkOutcomeDialog(
             successCount = activeBulkOutcome.first,
             failures = activeBulkOutcome.second,
             actionLabel = "unhidden",
-            onDismiss = { bulkOutcome = null }
+            onDismiss = { bulkOutcome = null },
+            onUndo = if (undoAvailable) {
+                {
+                    scope.launch {
+                        val undo = ZeaUndo.performBulkUndo(context)
+                        bulkOutcome = null
+                        outcomeMessage = "Undo: ${undo.reversed.size} restored, " +
+                                "${undo.refused.size} skipped (state changed), ${undo.failed.size} failed"
+                        outcomeSuccess = undo.failed.isEmpty()
+                        reloadToken++
+                    }
+                }
+            } else {
+                null
+            }
         )
     }
 }

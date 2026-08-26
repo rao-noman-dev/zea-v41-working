@@ -184,11 +184,14 @@ class ZeaPhase3ClosureLogicTest {
     }
 
     @Test
-    fun firePlan_endPhaseWhenWindowStillOpen_unhides() {
+    fun firePlan_endPhaseWhenWindowStillOpen_keepsProtectionAndRearms() {
+        // END validation: a PHASE_END broadcast while the window is still open
+        // is EARLY — protection must be retained and the true end re-armed.
+        // (The previous expectation asserted an UNHIDE here; that was the bug.)
         val now = atLocal(2026, Calendar.AUGUST, 26, 12, 0)
         val s = schedule(ZeaScheduleKind.DAILY, 9 * 60, 17 * 60)
         val plan = zeaScheduleFirePlan(s, "end", now)
-        assertEquals(ZeaScheduleAction.UNHIDE, plan.action)
+        assertEquals(ZeaScheduleAction.SKIP, plan.action)
         assertEquals(atLocal(2026, Calendar.AUGUST, 26, 17, 0), plan.endEpochMillis)
     }
 

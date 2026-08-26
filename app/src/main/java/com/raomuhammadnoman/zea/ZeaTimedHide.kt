@@ -32,6 +32,15 @@ object ZeaTimedHide {
 
         val failedRecords = mutableListOf<ZeaTimedHideRecord>()
         due.forEach { record ->
+            // A schedule-owned app keeps its protection until the schedule's
+            // own END restores the original deadline from its snapshot.
+            if (ZeaSchedules.isOwnedByActiveSchedule(appContext, record.packageName)) {
+                Log.i(
+                    ZEA_DEVICE_OWNER_LOG_TAG,
+                    "timed hide expiry for ${record.packageName} deferred: owned by an active schedule"
+                )
+                return@forEach
+            }
             val outcome = ZeaAppHideService.unhideApp(appContext, record.packageName)
             if (!outcome.success) {
                 failedRecords.add(record)
@@ -184,6 +193,16 @@ object ZeaTimedHide {
 
     suspend fun onExpiryAlarm(context: Context, packageName: String) {
         val appContext = context.applicationContext
+        // Schedule ownership wins over a stale manual timer: when an active
+        // schedule claimed this app, its window — not the old timer — decides
+        // when the app becomes visible again.
+        if (ZeaSchedules.isOwnedByActiveSchedule(appContext, packageName)) {
+            Log.i(
+                ZEA_DEVICE_OWNER_LOG_TAG,
+                "timed hide alarm for $packageName ignored: owned by an active schedule"
+            )
+            return
+        }
         val outcome = ZeaAppHideService.unhideApp(appContext, packageName)
         Log.i(
             ZEA_DEVICE_OWNER_LOG_TAG,

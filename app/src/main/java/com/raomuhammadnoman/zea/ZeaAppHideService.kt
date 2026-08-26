@@ -35,7 +35,9 @@ object ZeaAppHideService {
         outcome: ZeaHideOutcome,
         eventType: ZeaActivityEventType,
         previousMode: ZeaHideMode? = null,
-        timedEndEpochMillis: Long = 0L
+        timedEndEpochMillis: Long = 0L,
+        appliedTimedEndEpochMillis: Long = 0L,
+        suppressUndoRecord: Boolean = false
     ) {
         ZeaActivityLog.record(
             appContext,
@@ -51,7 +53,10 @@ object ZeaAppHideService {
             displayName,
             if (outcome.success) opLabel else "$opLabel (failed)"
         )
-        if (outcome.success && previousMode != null) {
+        if (outcome.success && previousMode != null && !suppressUndoRecord) {
+            // Bulk operations suppress the single-slot snapshot here and
+            // record one bulk snapshot for the whole batch instead, so each
+            // app no longer overwrites the previous app's undo entry.
             val operation = if (eventType == ZeaActivityEventType.TIMED_HIDE) {
                 UndoOperation.TIMED_HIDE
             } else {
@@ -64,11 +69,7 @@ object ZeaAppHideService {
                 operation,
                 previousMode,
                 timedEndEpochMillis,
-                appliedTimedEndEpochMillis = if (operation == UndoOperation.TIMED_HIDE) {
-                    timedEndEpochMillis
-                } else {
-                    0L
-                }
+                appliedTimedEndEpochMillis = appliedTimedEndEpochMillis
             )
         }
     }
@@ -79,7 +80,8 @@ object ZeaAppHideService {
         packageName: String,
         outcome: ZeaHideOutcome,
         previousMode: ZeaHideMode? = null,
-        timedEndEpochMillis: Long = 0L
+        timedEndEpochMillis: Long = 0L,
+        suppressUndoRecord: Boolean = false
     ) {
         ZeaActivityLog.record(
             appContext,
@@ -94,7 +96,7 @@ object ZeaAppHideService {
             displayName,
             if (outcome.success) "Unhide" else "Unhide (failed)"
         )
-        if (outcome.success && previousMode != null) {
+        if (outcome.success && previousMode != null && !suppressUndoRecord) {
             ZeaUndo.record(
                 appContext,
                 packageName,
@@ -112,7 +114,8 @@ object ZeaAppHideService {
 
     suspend fun hideApp(
         context: Context,
-        app: ZeaManagedApp
+        app: ZeaManagedApp,
+        suppressUndoRecord: Boolean = false
     ): ZeaHideOutcome {
         val appContext = context.applicationContext
 
@@ -330,7 +333,8 @@ object ZeaAppHideService {
                 record.packageName,
                 outcome,
                 ZeaActivityEventType.HIDE,
-                previousMode
+                previousMode,
+                suppressUndoRecord = suppressUndoRecord
             )
         }
     }
@@ -338,7 +342,8 @@ object ZeaAppHideService {
     suspend fun hideAppForTime(
         context: Context,
         app: ZeaManagedApp,
-        request: ZeaTimedHideRequest
+        request: ZeaTimedHideRequest,
+        suppressUndoRecord: Boolean = false
     ): ZeaHideOutcome {
         val appContext = context.applicationContext
 
@@ -523,6 +528,15 @@ object ZeaAppHideService {
             }
         }
 
+        // Exact-state undo snapshot: the PRIOR mode/end and the NEWLY APPLIED
+        // end are stored separately. A permanently hidden app that gets timed
+        // keeps previousMode=HIDDEN so undo restores the permanent hide; a
+        // re-timed app restores the previous deadline, never the new one.
+        val undoPreviousMode = when {
+            previousTimedRecord != null -> ZeaHideMode.TIMED
+            alreadyManaged -> ZeaHideMode.HIDDEN
+            else -> ZeaHideMode.VISIBLE
+        }
         return ZeaHideOutcome(
             success = true,
             message = modeMessage
@@ -533,11 +547,10 @@ object ZeaAppHideService {
                 app.packageName,
                 outcome,
                 ZeaActivityEventType.TIMED_HIDE,
-                if (alreadyManaged) ZeaHideMode.TIMED else ZeaHideMode.VISIBLE,
-                // The snapshot stores the PRIOR end time (when re-timing) so a
-                // Safe Undo can restore the previous timer exactly, never the
-                // just-applied end and never a permanent state.
-                previousTimedRecord?.hiddenUntilEpochMillis ?: request.endEpochMillis
+                undoPreviousMode,
+                previousTimedRecord?.hiddenUntilEpochMillis ?: 0L,
+                appliedTimedEndEpochMillis = request.endEpochMillis,
+                suppressUndoRecord = suppressUndoRecord
             )
         }
     }
@@ -575,7 +588,8 @@ object ZeaAppHideService {
      */
     suspend fun unhideApp(
         context: Context,
-        packageName: String
+        packageName: String,
+        suppressUndoRecord: Boolean = false
     ): ZeaHideOutcome {
         val appContext = context.applicationContext
 
@@ -781,8 +795,18 @@ object ZeaAppHideService {
                 target.packageName,
                 outcome,
                 previousMode,
-                previousTimedEnd
+                previousTimedEnd,
+                suppressUndoRecord = suppressUndoRecord
             )
+            if (outcome.success) {
+                // Manual override semantics: a user-initiated release during
+                // an active schedule window takes over for the rest of the
+                // cycle. Schedules that own this package record the override
+                // and skip it until the next cycle; internal callers that end
+                // ownership in the same transaction clear it immediately, so
+                // no stale override survives.
+                ZeaSchedules.recordManualOverride(appContext, packageName)
+            }
         }
     }
 

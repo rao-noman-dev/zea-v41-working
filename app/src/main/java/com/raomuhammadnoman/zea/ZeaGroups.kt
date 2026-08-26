@@ -16,7 +16,11 @@ data class ZeaGroup(
 
 data class ZeaGroupBatchResult(
     val succeeded: List<String>,
-    val failed: List<Pair<String, String>>
+    val failed: List<Pair<String, String>>,
+    /** False when the durable journal could not be closed even though member
+     *  states changed; the batch stays open for safe recovery and the UI must
+     *  present the operation as partial/recoverable, never as completed. */
+    val journalClosed: Boolean = true
 )
 
 /**
@@ -120,6 +124,30 @@ object ZeaGroups {
         return save(context, updated)
     }
 
+    /** Removes members whose package is no longer installed. Consistent
+     *  across every operation type and safe to call from load/refresh paths. */
+    suspend fun pruneStaleMembers(context: Context): Int = withContext(Dispatchers.IO) {
+        val installed = ZeaAppCatalog.loadManagedApps(context)
+            .map { it.packageName.lowercase() }
+            .toSet()
+        val groups = load(context)
+        var removed = 0
+        val updated = groups.map { group ->
+            val kept = group.memberPackages.filter {
+                val keep = it.lowercase() in installed
+                if (!keep) removed++
+                keep
+            }
+            if (kept.size != group.memberPackages.size) {
+                group.copy(memberPackages = kept)
+            } else {
+                group
+            }
+        }
+        if (removed > 0) save(context, updated)
+        removed
+    }
+
     /**
      * Hides every member through the verified per-app transaction engine,
      * wrapped in the durable Phase-1 batch journal. If the process dies after
@@ -127,75 +155,33 @@ object ZeaGroups {
      * so MainActivity's interrupted-batch recovery can resume — a group batch
      * is never a silent partial operation.
      */
-    suspend fun hideGroup(context: Context, groupId: String): ZeaGroupBatchResult {
-        val group = load(context).firstOrNull { it.id == groupId }
-            ?: return ZeaGroupBatchResult(emptyList(), emptyList())
-        val journal = ZeaBatchJournal.start(
-            context,
-            ZeaBatchJournal.OPERATION_HIDE,
-            group.memberPackages
-        ) ?: return ZeaGroupBatchResult(
-            emptyList(),
-            group.memberPackages.map { it to "Another batch is already in progress; try again after it resolves." }
-        )
-        val succeeded = mutableListOf<String>()
-        val failed = mutableListOf<Pair<String, String>>()
-        for (packageName in group.memberPackages) {
-            val app = zeaManagedAppFromPackage(context, packageName)
-            if (app == null) {
-                failed += packageName to "No longer installed; removed from group."
-                removeMember(context, groupId, packageName)
-                ZeaBatchJournal.markProcessed(context, journal.batchId, packageName)
-                continue
-            }
-            val outcome = ZeaAppHideService.hideApp(context, app)
-            if (outcome.success && ZeaBatchJournal.markProcessed(context, journal.batchId, packageName)) {
-                succeeded += packageName
-            } else {
-                failed += packageName to (if (outcome.success) "Journal durability failed." else outcome.message)
-            }
-        }
-        ZeaBatchJournal.complete(context, journal.batchId)
-        recordBatch(context, "hide", group, succeeded.size, failed.size)
-        return ZeaGroupBatchResult(succeeded, failed)
-    }
+    suspend fun hideGroup(context: Context, groupId: String): ZeaGroupBatchResult =
+        runGroupBatch(context, groupId, ZeaBatchJournal.OPERATION_HIDE, null)
 
-    suspend fun unhideGroup(context: Context, groupId: String): ZeaGroupBatchResult {
-        val group = load(context).firstOrNull { it.id == groupId }
-            ?: return ZeaGroupBatchResult(emptyList(), emptyList())
-        val journal = ZeaBatchJournal.start(
-            context,
-            ZeaBatchJournal.OPERATION_UNHIDE,
-            group.memberPackages
-        ) ?: return ZeaGroupBatchResult(
-            emptyList(),
-            group.memberPackages.map { it to "Another batch is already in progress; try again after it resolves." }
-        )
-        val succeeded = mutableListOf<String>()
-        val failed = mutableListOf<Pair<String, String>>()
-        for (packageName in group.memberPackages) {
-            val outcome = ZeaAppHideService.unhideApp(context, packageName)
-            if (outcome.success && ZeaBatchJournal.markProcessed(context, journal.batchId, packageName)) {
-                succeeded += packageName
-            } else {
-                failed += packageName to (if (outcome.success) "Journal durability failed." else outcome.message)
-            }
-        }
-        ZeaBatchJournal.complete(context, journal.batchId)
-        recordBatch(context, "unhide", group, succeeded.size, failed.size)
-        return ZeaGroupBatchResult(succeeded, failed)
-    }
+    suspend fun unhideGroup(context: Context, groupId: String): ZeaGroupBatchResult =
+        runGroupBatch(context, groupId, ZeaBatchJournal.OPERATION_UNHIDE, null)
 
     suspend fun hideGroupForTime(
         context: Context,
         groupId: String,
         request: ZeaTimedHideRequest
+    ): ZeaGroupBatchResult =
+        runGroupBatch(context, groupId, ZeaBatchJournal.OPERATION_TIMED_HIDE, request)
+
+    private suspend fun runGroupBatch(
+        context: Context,
+        groupId: String,
+        operation: String,
+        request: ZeaTimedHideRequest?
     ): ZeaGroupBatchResult {
+        // Stale cleanup is uniform: every operation type drops ghost members
+        // first instead of only cleaning opportunistically in one path.
+        pruneStaleMembers(context)
         val group = load(context).firstOrNull { it.id == groupId }
             ?: return ZeaGroupBatchResult(emptyList(), emptyList())
         val journal = ZeaBatchJournal.start(
             context,
-            ZeaBatchJournal.OPERATION_TIMED_HIDE,
+            operation,
             group.memberPackages,
             request
         ) ?: return ZeaGroupBatchResult(
@@ -204,6 +190,9 @@ object ZeaGroups {
         )
         val succeeded = mutableListOf<String>()
         val failed = mutableListOf<Pair<String, String>>()
+        // Bulk undo snapshot: per-package previous + applied state, recorded
+        // once for the whole batch so member N never overwrites member N-1.
+        val undoEntries = mutableListOf<ZeaUndoEntry>()
         for (packageName in group.memberPackages) {
             val app = zeaManagedAppFromPackage(context, packageName)
             if (app == null) {
@@ -212,16 +201,53 @@ object ZeaGroups {
                 ZeaBatchJournal.markProcessed(context, journal.batchId, packageName)
                 continue
             }
-            val outcome = ZeaAppHideService.hideAppForTime(context, app, request)
+            val outcome = when (operation) {
+                ZeaBatchJournal.OPERATION_UNHIDE ->
+                    ZeaAppHideService.unhideApp(context, packageName, suppressUndoRecord = true)
+                ZeaBatchJournal.OPERATION_TIMED_HIDE ->
+                    ZeaAppHideService.hideAppForTime(
+                        context, app, request!!, suppressUndoRecord = true
+                    )
+                else ->
+                    ZeaAppHideService.hideApp(context, app, suppressUndoRecord = true)
+            }
             if (outcome.success && ZeaBatchJournal.markProcessed(context, journal.batchId, packageName)) {
                 succeeded += packageName
+                undoEntries += ZeaUndoEntry(
+                    operation = when (operation) {
+                        ZeaBatchJournal.OPERATION_UNHIDE -> UndoOperation.UNHIDE
+                        ZeaBatchJournal.OPERATION_TIMED_HIDE -> UndoOperation.TIMED_HIDE
+                        else -> UndoOperation.HIDE
+                    },
+                    packageName = app.packageName,
+                    displayName = app.displayName,
+                    previousMode = app.hideMode,
+                    timedEndEpochMillis = app.hiddenUntilEpochMillis,
+                    epochMillis = System.currentTimeMillis(),
+                    appliedTimedEndEpochMillis = if (operation == ZeaBatchJournal.OPERATION_TIMED_HIDE) {
+                        request?.endEpochMillis ?: 0L
+                    } else {
+                        0L
+                    }
+                )
             } else {
                 failed += packageName to (if (outcome.success) "Journal durability failed." else outcome.message)
             }
         }
-        ZeaBatchJournal.complete(context, journal.batchId)
-        recordBatch(context, "hide for time (${request.label})", group, succeeded.size, failed.size)
-        return ZeaGroupBatchResult(succeeded, failed)
+        // Journal truth: the batch is reported as completed ONLY when the
+        // durable journal actually closed. A journal that stayed open means
+        // the operation is partial/recoverable, and history must say so.
+        val closed = ZeaBatchJournal.complete(context, journal.batchId)
+        val label = when (operation) {
+            ZeaBatchJournal.OPERATION_UNHIDE -> "unhide"
+            ZeaBatchJournal.OPERATION_TIMED_HIDE -> "hide for time (${request?.label})"
+            else -> "hide"
+        }
+        recordBatch(context, label, group, succeeded.size, failed.size, closed)
+        if (closed && undoEntries.isNotEmpty()) {
+            ZeaUndo.recordBulk(context, undoEntries)
+        }
+        return ZeaGroupBatchResult(succeeded, failed, journalClosed = closed)
     }
 
     private suspend fun recordBatch(
@@ -229,9 +255,11 @@ object ZeaGroups {
         operation: String,
         group: ZeaGroup,
         succeeded: Int,
-        failed: Int
+        failed: Int,
+        journalClosed: Boolean
     ) {
         val result = when {
+            !journalClosed -> ZeaActivityResult.PARTIAL
             failed == 0 -> ZeaActivityResult.SUCCESS
             succeeded == 0 -> ZeaActivityResult.FAILURE
             else -> ZeaActivityResult.PARTIAL
@@ -240,18 +268,30 @@ object ZeaGroups {
             context,
             ZeaActivityEventType.GROUP_ACTION,
             group.name,
-            "$operation: $succeeded succeeded, $failed failed",
+            "$operation: $succeeded succeeded, $failed failed" +
+                    if (journalClosed) "" else "; journal left open for recovery",
             result
         )
-        // Batch summary event: the durable journal close is evidence; this
-        // history entry is the user-visible summary of the same batch.
-        ZeaActivityLog.record(
-            context,
-            ZeaActivityEventType.BATCH_COMPLETED,
-            group.name,
-            "batch closed: $operation, $succeeded/${succeeded + failed} verified",
-            result
-        )
+        // Batch summary event: BATCH_COMPLETED is written ONLY when the
+        // durable journal actually closed. An open journal means the batch is
+        // still recoverable, so history records it as such instead of lying.
+        if (journalClosed) {
+            ZeaActivityLog.record(
+                context,
+                ZeaActivityEventType.BATCH_COMPLETED,
+                group.name,
+                "batch closed: $operation, $succeeded/${succeeded + failed} verified",
+                result
+            )
+        } else {
+            ZeaActivityLog.record(
+                context,
+                ZeaActivityEventType.RECOVERY,
+                group.name,
+                "batch NOT durably closed: $operation, $succeeded/${succeeded + failed} verified; recovery pending",
+                ZeaActivityResult.PARTIAL
+            )
+        }
     }
 
     private fun encode(groups: List<ZeaGroup>): String {
